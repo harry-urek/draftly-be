@@ -57,10 +57,6 @@ export async function authMiddleware(
       userId: decodedToken.uid,
       email: decodedToken.email || userRecord.email || "",
     };
-
-    // Security enhancement: Log every authenticated request for audit purposes
-    console.log(`[AUTH] Authenticated request from user: ${decodedToken.uid} to ${request.url}`);
-    
   } catch (error) {
     console.error("Auth middleware error:", (error as Error).message);
 
@@ -81,58 +77,5 @@ export async function authMiddleware(
 
 // Helper to require authentication on routes
 export function requireAuth() {
-  return {
-    preHandler: authMiddleware,
-  };
-}
-
-// Enhanced middleware that checks Gmail permissions and forces re-verification
-export async function requireGmailAuth(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
-  // First run standard auth middleware
-  await authMiddleware(request, reply);
-  
-  if (reply.sent) {
-    return; // Auth failed, response already sent
-  }
-
-  try {
-    const user = request.firebaseUser!;
-    
-    // Import getUserProfile here to avoid circular dependency
-    const { getUserProfile } = await import("../lib/user.js");
-    const profile = await getUserProfile(user.firebaseUid);
-
-    if (!profile) {
-      return reply.status(404).send({ error: "User not found" });
-    }
-
-    // Check if user has valid Gmail tokens
-    const hasValidTokens = profile.accessToken && profile.refreshToken;
-
-    if (!hasValidTokens) {
-      return reply.status(403).send({
-        error: "Gmail authorization required",
-        message: "Please re-verify Gmail permissions to access this feature",
-        needsGmailAuth: true,
-      });
-    }
-
-    console.log(`[AUTH] Gmail permissions verified for user: ${user.firebaseUid}`);
-    
-  } catch (error) {
-    console.error("Gmail auth check error:", (error as Error).message);
-    return reply.status(500).send({
-      error: "Failed to verify Gmail permissions",
-    });
-  }
-}
-
-// Helper to require both authentication and Gmail permissions
-export function requireGmailPermissions() {
-  return {
-    preHandler: requireGmailAuth,
-  };
+  return authMiddleware;
 }
