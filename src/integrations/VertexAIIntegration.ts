@@ -31,15 +31,17 @@ export class VertexAIIntegration {
 
       return !!result.response;
     } catch (error) {
-      console.error('Vertex AI connection test failed:', error);
+      console.error("Vertex AI connection test failed:", error);
       return false;
     }
   }
 
-  async generateStyleProfile(questionnaireData: Record<string, any>): Promise<AIStyleProfile> {
+  async generateStyleProfile(
+    questionnaireData: Record<string, any>
+  ): Promise<AIStyleProfile> {
     try {
       const prompt = this.createStyleProfilePrompt(questionnaireData);
-      
+
       const generationConfig = {
         temperature: 0.3,
         topP: 0.8,
@@ -62,7 +64,10 @@ export class VertexAIIntegration {
 
       return JSON.parse(profileJson);
     } catch (error) {
-      throw new ExternalServiceError('Vertex AI', `Failed to generate style profile: ${error}`);
+      throw new ExternalServiceError(
+        "Vertex AI",
+        `Failed to generate style profile: ${error}`
+      );
     }
   }
 
@@ -93,11 +98,16 @@ export class VertexAIIntegration {
 
       return draft;
     } catch (error) {
-      throw new ExternalServiceError('Vertex AI', `Failed to generate email draft: ${error}`);
+      throw new ExternalServiceError(
+        "Vertex AI",
+        `Failed to generate email draft: ${error}`
+      );
     }
   }
 
-  private createStyleProfilePrompt(questionnaireData: Record<string, any>): string {
+  private createStyleProfilePrompt(
+    questionnaireData: Record<string, any>
+  ): string {
     return `
 Analyze the following user questionnaire responses and generate a comprehensive AI writing style profile.
 
@@ -128,9 +138,17 @@ ${JSON.stringify(styleProfile, null, 2)}
 
 **EMAIL CONTEXT:**
 Original Email: ${context.originalEmail}
-${context.threadHistory ? `Thread History: ${context.threadHistory.join("\n---\n")}` : ""}
+${
+  context.threadHistory
+    ? `Thread History: ${context.threadHistory.join("\n---\n")}`
+    : ""
+}
 ${context.tone ? `Requested Tone: ${context.tone}` : ""}
-${context.recipient ? `Recipient: ${context.recipient.name} (${context.recipient.email}) - ${context.recipient.relationship}` : ""}
+${
+  context.recipient
+    ? `Recipient: ${context.recipient.name} (${context.recipient.email}) - ${context.recipient.relationship}`
+    : ""
+}
 
 **INSTRUCTIONS:**
 - Write a reply to the original email
@@ -153,13 +171,32 @@ Generate the email draft now:
           properties: {
             primaryTone: {
               type: SchemaType.STRING,
-              enum: ["Friendly", "Formal", "Direct", "Diplomatic", "Casual", "Professional"],
+              enum: [
+                "Friendly",
+                "Formal",
+                "Direct",
+                "Diplomatic",
+                "Casual",
+                "Professional",
+              ],
             },
             secondaryTone: {
               type: SchemaType.STRING,
-              enum: ["Friendly", "Formal", "Direct", "Diplomatic", "Casual", "Professional", "null"],
+              enum: [
+                "Friendly",
+                "Formal",
+                "Direct",
+                "Diplomatic",
+                "Casual",
+                "Professional",
+                "null",
+              ],
             },
-            formalityScore: { type: SchemaType.INTEGER, minimum: 1, maximum: 5 },
+            formalityScore: {
+              type: SchemaType.INTEGER,
+              minimum: 1,
+              maximum: 5,
+            },
             toneFlexibility: {
               type: SchemaType.STRING,
               enum: ["Rigid", "Moderate", "Highly Adaptive"],
@@ -173,16 +210,31 @@ Generate the email draft now:
             greetingStyle: {
               type: SchemaType.OBJECT,
               properties: {
-                newContact: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
-                colleague: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
-                manager: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+                newContact: {
+                  type: SchemaType.ARRAY,
+                  items: { type: SchemaType.STRING },
+                },
+                colleague: {
+                  type: SchemaType.ARRAY,
+                  items: { type: SchemaType.STRING },
+                },
+                manager: {
+                  type: SchemaType.ARRAY,
+                  items: { type: SchemaType.STRING },
+                },
               },
             },
             closingStyle: {
               type: SchemaType.OBJECT,
               properties: {
-                formal: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
-                casual: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+                formal: {
+                  type: SchemaType.ARRAY,
+                  items: { type: SchemaType.STRING },
+                },
+                casual: {
+                  type: SchemaType.ARRAY,
+                  items: { type: SchemaType.STRING },
+                },
               },
             },
             sentenceComplexity: {
@@ -191,7 +243,11 @@ Generate the email draft now:
             },
             paragraphLength: {
               type: SchemaType.STRING,
-              enum: ["Short (1-2 sentences)", "Medium (3-4 sentences)", "Long (5+ sentences)"],
+              enum: [
+                "Short (1-2 sentences)",
+                "Medium (3-4 sentences)",
+                "Long (5+ sentences)",
+              ],
             },
             useOfFormatting: {
               type: SchemaType.STRING,
@@ -211,8 +267,14 @@ Generate the email draft now:
               type: SchemaType.STRING,
               enum: ["Never", "Rare", "Occasional", "Frequent"],
             },
-            commonPhrases: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
-            fillerWords: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+            commonPhrases: {
+              type: SchemaType.ARRAY,
+              items: { type: SchemaType.STRING },
+            },
+            fillerWords: {
+              type: SchemaType.ARRAY,
+              items: { type: SchemaType.STRING },
+            },
             technicalJargon: {
               type: SchemaType.STRING,
               enum: ["Low", "Medium", "High"],
@@ -232,7 +294,11 @@ Generate the email draft now:
             },
             responsivenessStyle: {
               type: SchemaType.STRING,
-              enum: ["Immediate and Brief", "Thoughtful and Detailed", "Contextual"],
+              enum: [
+                "Immediate and Brief",
+                "Thoughtful and Detailed",
+                "Contextual",
+              ],
             },
             conflictHandling: {
               type: SchemaType.STRING,
@@ -273,11 +339,21 @@ Generate the email draft now:
         writingHabits: {
           type: SchemaType.OBJECT,
           properties: {
-            petPeeves: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
-            signatureElements: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+            petPeeves: {
+              type: SchemaType.ARRAY,
+              items: { type: SchemaType.STRING },
+            },
+            signatureElements: {
+              type: SchemaType.ARRAY,
+              items: { type: SchemaType.STRING },
+            },
             openingStrategy: {
               type: SchemaType.STRING,
-              enum: ["Direct to point", "Warm greeting first", "Context setting"],
+              enum: [
+                "Direct to point",
+                "Warm greeting first",
+                "Context setting",
+              ],
             },
             closingStrategy: {
               type: SchemaType.STRING,

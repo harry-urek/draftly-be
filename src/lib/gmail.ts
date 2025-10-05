@@ -109,7 +109,9 @@ export async function getUserInfo(accessToken: string) {
  * @param firebaseUid - User's Firebase UID
  * @returns true if tokens are valid and working, false otherwise
  */
-export async function validateGmailTokens(firebaseUid: string): Promise<boolean> {
+export async function validateGmailTokens(
+  firebaseUid: string
+): Promise<boolean> {
   try {
     const tokens = await getUserTokensDecrypted(firebaseUid);
     if (!tokens?.accessToken) {
@@ -125,18 +127,23 @@ export async function validateGmailTokens(firebaseUid: string): Promise<boolean>
     // Make a simple test call to verify token validity
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
     await gmail.users.getProfile({ userId: "me" });
-    
+
     // If the call succeeds, tokens are valid
     return true;
   } catch (error: any) {
     // If we get authentication errors, tokens are invalid
     if (error.code === 401 || error.code === 403) {
-      console.log(`Invalid Gmail tokens for user ${firebaseUid}: ${error.message}`);
+      console.log(
+        `Invalid Gmail tokens for user ${firebaseUid}: ${error.message}`
+      );
       return false;
     }
-    
+
     // For other errors, assume tokens might be valid but there's a temporary issue
-    console.warn(`Error validating Gmail tokens for user ${firebaseUid}:`, error.message);
+    console.warn(
+      `Error validating Gmail tokens for user ${firebaseUid}:`,
+      error.message
+    );
     return false;
   }
 }
@@ -352,15 +359,15 @@ export async function sendEmailReply(
     let emailContent = `From: ${userEmail}\r\n`;
     emailContent += `To: ${replyData.to}\r\n`;
     emailContent += `Subject: ${replyData.subject}\r\n`;
-    
+
     if (replyData.inReplyTo) {
       emailContent += `In-Reply-To: ${replyData.inReplyTo}\r\n`;
     }
-    
+
     if (replyData.references) {
       emailContent += `References: ${replyData.references}\r\n`;
     }
-    
+
     emailContent += `Content-Type: text/html; charset=utf-8\r\n`;
     emailContent += `\r\n`;
     emailContent += replyData.body;
@@ -432,15 +439,16 @@ export async function getGmailMessage(
     const headers: any[] = messageDetail.data.payload?.headers || [];
     const subject =
       headers.find((h: any) => h.name === "Subject")?.value || "No Subject";
-    const from = headers.find((h: any) => h.name === "From")?.value || "Unknown";
+    const from =
+      headers.find((h: any) => h.name === "From")?.value || "Unknown";
     const to = headers.find((h: any) => h.name === "To")?.value || "";
     const date =
       headers.find((h: any) => h.name === "Date")?.value ||
       new Date().toISOString();
-    const messageIdHeader: string = headers.find((h: any) => h.name === "Message-ID")?.value || "";
+    const messageIdHeader: string =
+      headers.find((h: any) => h.name === "Message-ID")?.value || "";
 
-    const isUnread =
-      messageDetail.data.labelIds?.includes("UNREAD") || false;
+    const isUnread = messageDetail.data.labelIds?.includes("UNREAD") || false;
 
     // Extract body from payload
     const body = extractBody(messageDetail.data.payload);

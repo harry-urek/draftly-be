@@ -5,7 +5,7 @@ const AES_ALGORITHM = "aes-256-gcm";
 
 function getEncryptionKey(): Buffer {
   const keyBase64 = config.tokenEncryptionKey;
-  
+
   if (!keyBase64) {
     throw new Error(
       "TOKEN_ENCRYPTION_KEY is not set. Generate a 32-byte base64 value and add it to your .env file."
@@ -33,7 +33,9 @@ export function encryptSecret(plainText: string): string {
   ]);
   const authTag = cipher.getAuthTag();
 
-  return `${iv.toString("base64")}.${authTag.toString("base64")}.${encrypted.toString("base64")}`;
+  return `${iv.toString("base64")}.${authTag.toString(
+    "base64"
+  )}.${encrypted.toString("base64")}`;
 }
 
 export function decryptSecret(payload: string): string {
@@ -61,14 +63,18 @@ export function tryEncrypt(plainText: string): string {
     return encryptSecret(plainText);
   } catch (e) {
     if (config.nodeEnv !== "production") {
-      console.warn("TOKEN_ENCRYPTION_KEY missing/invalid. Storing token unencrypted in development.");
+      console.warn(
+        "TOKEN_ENCRYPTION_KEY missing/invalid. Storing token unencrypted in development."
+      );
       return plainText;
     }
     throw e;
   }
 }
 
-export function tryDecrypt(possiblyEncrypted: string | null | undefined): string | undefined {
+export function tryDecrypt(
+  possiblyEncrypted: string | null | undefined
+): string | undefined {
   if (!possiblyEncrypted) return undefined;
   try {
     return decryptSecret(possiblyEncrypted);

@@ -35,7 +35,10 @@ export class GmailIntegration {
         refreshToken: tokens.refresh_token || undefined,
       };
     } catch (error) {
-      throw new ExternalServiceError('Gmail OAuth', `Failed to exchange code for tokens: ${error}`);
+      throw new ExternalServiceError(
+        "Gmail OAuth",
+        `Failed to exchange code for tokens: ${error}`
+      );
     }
   }
 
@@ -55,11 +58,17 @@ export class GmailIntegration {
       if (error.code === 401 || error.code === 403) {
         return false;
       }
-      throw new ExternalServiceError('Gmail', `Token validation failed: ${error.message}`);
+      throw new ExternalServiceError(
+        "Gmail",
+        `Token validation failed: ${error.message}`
+      );
     }
   }
 
-  async getMessages(tokens: AuthTokens, maxResults: number = 25): Promise<GmailMessage[]> {
+  async getMessages(
+    tokens: AuthTokens,
+    maxResults: number = 25
+  ): Promise<GmailMessage[]> {
     try {
       this.oauth2Client.setCredentials({
         access_token: tokens.accessToken,
@@ -93,11 +102,19 @@ export class GmailIntegration {
 
       return detailedMessages;
     } catch (error) {
-      throw new ExternalServiceError('Gmail', `Failed to fetch messages: ${error}`);
+      throw new ExternalServiceError(
+        "Gmail",
+        `Failed to fetch messages: ${error}`
+      );
     }
   }
 
-  async sendEmail(tokens: AuthTokens, to: string, subject: string, body: string): Promise<string> {
+  async sendEmail(
+    tokens: AuthTokens,
+    to: string,
+    subject: string,
+    body: string
+  ): Promise<string> {
     try {
       this.oauth2Client.setCredentials({
         access_token: tokens.accessToken,
@@ -106,14 +123,9 @@ export class GmailIntegration {
 
       const gmail = google.gmail({ version: "v1", auth: this.oauth2Client });
 
-      const email = [
-        `To: ${to}`,
-        `Subject: ${subject}`,
-        '',
-        body
-      ].join('\n');
+      const email = [`To: ${to}`, `Subject: ${subject}`, "", body].join("\n");
 
-      const encodedEmail = Buffer.from(email).toString('base64url');
+      const encodedEmail = Buffer.from(email).toString("base64url");
 
       const result = await gmail.users.messages.send({
         userId: "me",
@@ -122,33 +134,34 @@ export class GmailIntegration {
         },
       });
 
-      return result.data.id || '';
+      return result.data.id || "";
     } catch (error) {
-      throw new ExternalServiceError('Gmail', `Failed to send email: ${error}`);
+      throw new ExternalServiceError("Gmail", `Failed to send email: ${error}`);
     }
   }
 
   private parseGmailMessage(data: any): GmailMessage | null {
     try {
       const headers = data.payload?.headers || [];
-      const getHeader = (name: string) => 
-        headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || '';
+      const getHeader = (name: string) =>
+        headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())
+          ?.value || "";
 
       const body = this.extractBody(data.payload);
 
       return {
         id: data.id,
         threadId: data.threadId,
-        subject: getHeader('Subject'),
-        from: getHeader('From'),
-        to: getHeader('To'),
-        date: getHeader('Date'),
-        snippet: data.snippet || '',
+        subject: getHeader("Subject"),
+        from: getHeader("From"),
+        to: getHeader("To"),
+        date: getHeader("Date"),
+        snippet: data.snippet || "",
         body,
-        isUnread: data.labelIds?.includes('UNREAD') || false,
+        isUnread: data.labelIds?.includes("UNREAD") || false,
       };
     } catch (error) {
-      console.error('Error parsing Gmail message:', error);
+      console.error("Error parsing Gmail message:", error);
       return null;
     }
   }
@@ -162,8 +175,12 @@ export class GmailIntegration {
     }
 
     if (payload.parts) {
-      const htmlPart = payload.parts.find((part: any) => part.mimeType === "text/html");
-      const textPart = payload.parts.find((part: any) => part.mimeType === "text/plain");
+      const htmlPart = payload.parts.find(
+        (part: any) => part.mimeType === "text/html"
+      );
+      const textPart = payload.parts.find(
+        (part: any) => part.mimeType === "text/plain"
+      );
       const preferredPart = htmlPart || textPart;
 
       if (preferredPart?.body?.data) {

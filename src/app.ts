@@ -36,7 +36,12 @@ const vertexAIIntegration = new VertexAIIntegration();
 
 // Initialize services
 const authService = new AuthService(userRepository, gmailIntegration);
-const emailService = new EmailService(emailRepository, userRepository, gmailIntegration, vertexAIIntegration);
+const emailService = new EmailService(
+  emailRepository,
+  userRepository,
+  gmailIntegration,
+  vertexAIIntegration
+);
 const userService = new UserService(userRepository, vertexAIIntegration);
 
 // Initialize controllers
@@ -46,15 +51,22 @@ export async function createApp() {
   const fastify = Fastify({
     logger: {
       level: config.nodeEnv === "production" ? "info" : "debug",
-      transport: config.nodeEnv !== "production" ? {
-        target: "pino-pretty",
-      } : undefined,
+      transport:
+        config.nodeEnv !== "production"
+          ? {
+              target: "pino-pretty",
+            }
+          : undefined,
     },
   });
 
   // Register plugins
   await fastify.register(cors, {
-    origin: [config.frontendUrl, "http://localhost:3000", "https://draftly.app"],
+    origin: [
+      config.frontendUrl,
+      "http://localhost:3000",
+      "https://draftly.app",
+    ],
     credentials: true,
   });
 
@@ -91,10 +103,10 @@ export async function createApp() {
     try {
       // Test database connection
       await prisma.user.findFirst();
-      
+
       // Test AI connection
       const aiConnected = await vertexAIIntegration.testConnection();
-      
+
       return {
         status: "healthy",
         timestamp: new Date().toISOString(),
@@ -123,75 +135,99 @@ export async function createApp() {
   authController.registerRoutes(fastify);
 
   // Email routes (simplified)
-  fastify.get("/api/emails/threads", { preHandler: [async (request: any, reply: any) => {
-    // Simple auth check - in production this should use proper middleware
-    if (!request.headers.authorization) {
-      return reply.status(401).send({ error: 'Unauthorized' });
-    }
-  }] }, async (request, reply) => {
-    try {
-      const user = (request as any).firebaseUser!;
-      const { limit } = request.query as { limit?: string };
-      
-      const result = await emailService.getThreads(user.firebaseUid, limit ? parseInt(limit) : 25);
-      
-      if (!result.success) {
-        return reply.status(500).send({ error: result.error });
-      }
-      
-      return reply.send({ threads: result.data });
-    } catch (error) {
-      console.error("Get threads error:", error);
-      return reply.status(500).send({ error: "Failed to get email threads" });
-    }
-  });
+  fastify.get(
+    "/api/emails/threads",
+    {
+      preHandler: [
+        async (request: any, reply: any) => {
+          // Simple auth check - in production this should use proper middleware
+          if (!request.headers.authorization) {
+            return reply.status(401).send({ error: "Unauthorized" });
+          }
+        },
+      ],
+    },
+    async (request, reply) => {
+      try {
+        const user = (request as any).firebaseUser!;
+        const { limit } = request.query as { limit?: string };
 
-  fastify.post("/api/emails/sync", { preHandler: [require("./middleware/auth.js").requireAuth()] }, async (request, reply) => {
-    try {
-      const user = (request as any).firebaseUser!;
-      
-      const result = await emailService.syncUserEmails(user.firebaseUid);
-      
-      if (!result.success) {
-        return reply.status(500).send({ error: result.error });
+        const result = await emailService.getThreads(
+          user.firebaseUid,
+          limit ? parseInt(limit) : 25
+        );
+
+        if (!result.success) {
+          return reply.status(500).send({ error: result.error });
+        }
+
+        return reply.send({ threads: result.data });
+      } catch (error) {
+        console.error("Get threads error:", error);
+        return reply.status(500).send({ error: "Failed to get email threads" });
       }
-      
-      return reply.send({ 
-        message: "Emails synced successfully", 
-        syncedCount: result.data 
-      });
-    } catch (error) {
-      console.error("Sync emails error:", error);
-      return reply.status(500).send({ error: "Failed to sync emails" });
     }
-  });
+  );
+
+  fastify.post(
+    "/api/emails/sync",
+    { preHandler: [require("./middleware/auth.js").requireAuth()] },
+    async (request, reply) => {
+      try {
+        const user = (request as any).firebaseUser!;
+
+        const result = await emailService.syncUserEmails(user.firebaseUid);
+
+        if (!result.success) {
+          return reply.status(500).send({ error: result.error });
+        }
+
+        return reply.send({
+          message: "Emails synced successfully",
+          syncedCount: result.data,
+        });
+      } catch (error) {
+        console.error("Sync emails error:", error);
+        return reply.status(500).send({ error: "Failed to sync emails" });
+      }
+    }
+  );
 
   // User/Onboarding routes (simplified)
-  fastify.post("/api/onboarding/generate-profile", { preHandler: [require("./middleware/auth.js").requireAuth()] }, async (request, reply) => {
-    try {
-      const user = (request as any).firebaseUser!;
-      const questionnaireData = request.body as Record<string, any>;
-      
-      const result = await userService.generateStyleProfile(user.firebaseUid, questionnaireData);
-      
-      if (!result.success) {
-        return reply.status(500).send({ error: result.error });
+  fastify.post(
+    "/api/onboarding/generate-profile",
+    { preHandler: [require("./middleware/auth.js").requireAuth()] },
+    async (request, reply) => {
+      try {
+        const user = (request as any).firebaseUser!;
+        const questionnaireData = request.body as Record<string, any>;
+
+        const result = await userService.generateStyleProfile(
+          user.firebaseUid,
+          questionnaireData
+        );
+
+        if (!result.success) {
+          return reply.status(500).send({ error: result.error });
+        }
+
+        return reply.send({
+          message: "Style profile generated successfully",
+          profile: result.data,
+        });
+      } catch (error) {
+        console.error("Generate profile error:", error);
+        return reply
+          .status(500)
+          .send({ error: "Failed to generate style profile" });
       }
-      
-      return reply.send({ 
-        message: "Style profile generated successfully",
-        profile: result.data 
-      });
-    } catch (error) {
-      console.error("Generate profile error:", error);
-      return reply.status(500).send({ error: "Failed to generate style profile" });
     }
-  });
+  );
 
   // Global error handler
   fastify.setErrorHandler((error, request, reply) => {
     fastify.log.error(error);
-    
+
     if (error.statusCode) {
       reply.status(error.statusCode).send({
         error: error.message,

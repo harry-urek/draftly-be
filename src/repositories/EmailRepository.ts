@@ -9,46 +9,59 @@ export class EmailRepository {
       where: { id },
       include: {
         emails: {
-          orderBy: { timestamp: 'asc' }
-        }
-      }
+          orderBy: { timestamp: "asc" },
+        },
+      },
     });
     return thread ? this.mapToEmailThread(thread) : null;
   }
 
-  async findThreadsByUserId(userId: string, limit: number = 25): Promise<EmailThread[]> {
+  async findThreadsByUserId(
+    userId: string,
+    limit: number = 25
+  ): Promise<EmailThread[]> {
     const threads = await this.prisma.thread.findMany({
       where: { userId },
       include: {
         emails: {
-          orderBy: { timestamp: 'desc' },
-          take: 1 // Get latest email for preview
-        }
+          orderBy: { timestamp: "desc" },
+          take: 1, // Get latest email for preview
+        },
       },
-      orderBy: { updatedAt: 'desc' },
-      take: limit
+      orderBy: { updatedAt: "desc" },
+      take: limit,
     });
-    return threads.map(thread => this.mapToEmailThread(thread));
+    return threads.map((thread) => this.mapToEmailThread(thread));
   }
 
-  async createThread(userId: string, gmailId: string, subject: string): Promise<EmailThread> {
+  async createThread(
+    userId: string,
+    gmailId: string,
+    subject: string
+  ): Promise<EmailThread> {
     const thread = await this.prisma.thread.create({
       data: {
         userId,
         gmailId,
-        subject
+        subject,
       },
       include: {
-        emails: true
-      }
+        emails: true,
+      },
     });
     return this.mapToEmailThread(thread);
   }
 
-  async createEmail(emailData: Omit<EmailMessage, 'id'> & { userId: string; threadId: string; gmailId?: string }): Promise<EmailMessage> {
+  async createEmail(
+    emailData: Omit<EmailMessage, "id"> & {
+      userId: string;
+      threadId: string;
+      gmailId?: string;
+    }
+  ): Promise<EmailMessage> {
     const email = await this.prisma.email.create({
       data: {
-        gmailId: emailData.gmailId || '',
+        gmailId: emailData.gmailId || "",
         threadId: emailData.threadId,
         userId: emailData.userId,
         from: emailData.from,
@@ -57,8 +70,8 @@ export class EmailRepository {
         body: emailData.body,
         htmlBody: emailData.htmlBody,
         timestamp: emailData.timestamp,
-        isUnread: emailData.isUnread
-      }
+        isUnread: emailData.isUnread,
+      },
     });
     return this.mapToEmailMessage(email);
   }
@@ -66,19 +79,23 @@ export class EmailRepository {
   async markAsRead(emailId: string): Promise<void> {
     await this.prisma.email.update({
       where: { id: emailId },
-      data: { isUnread: false }
+      data: { isUnread: false },
     });
   }
 
-  async createDraft(draftData: Omit<EmailDraft, 'id' | 'createdAt' | 'updatedAt'> & { userId: string }): Promise<EmailDraft> {
+  async createDraft(
+    draftData: Omit<EmailDraft, "id" | "createdAt" | "updatedAt"> & {
+      userId: string;
+    }
+  ): Promise<EmailDraft> {
     const draft = await this.prisma.draft.create({
       data: {
         threadId: draftData.threadId,
         userId: draftData.userId,
         content: draftData.content,
         tone: draftData.tone,
-        status: (draftData.status as any) || 'PENDING'
-      }
+        status: (draftData.status as any) || "PENDING",
+      },
     });
     return this.mapToEmailDraft(draft);
   }
@@ -86,19 +103,19 @@ export class EmailRepository {
   async updateDraftStatus(draftId: string, status: string): Promise<void> {
     await this.prisma.draft.update({
       where: { id: draftId },
-      data: { 
+      data: {
         status: status as any,
-        ...(status === 'SENT' && { sentAt: new Date() })
-      }
+        ...(status === "SENT" && { sentAt: new Date() }),
+      },
     });
   }
 
   async findDraftsByUserId(userId: string): Promise<EmailDraft[]> {
     const drafts = await this.prisma.draft.findMany({
       where: { userId },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: "desc" },
     });
-    return drafts.map(draft => this.mapToEmailDraft(draft));
+    return drafts.map((draft) => this.mapToEmailDraft(draft));
   }
 
   private mapToEmailMessage(dbEmail: any): EmailMessage {
@@ -111,7 +128,7 @@ export class EmailRepository {
       body: dbEmail.body,
       htmlBody: dbEmail.htmlBody,
       timestamp: new Date(dbEmail.timestamp),
-      isUnread: dbEmail.isUnread
+      isUnread: dbEmail.isUnread,
     };
   }
 
@@ -120,9 +137,11 @@ export class EmailRepository {
       id: dbThread.id,
       gmailId: dbThread.gmailId,
       subject: dbThread.subject,
-      messages: dbThread.emails?.map((email: any) => this.mapToEmailMessage(email)) || [],
+      messages:
+        dbThread.emails?.map((email: any) => this.mapToEmailMessage(email)) ||
+        [],
       createdAt: new Date(dbThread.createdAt),
-      updatedAt: new Date(dbThread.updatedAt)
+      updatedAt: new Date(dbThread.updatedAt),
     };
   }
 
@@ -134,7 +153,7 @@ export class EmailRepository {
       tone: dbDraft.tone,
       status: dbDraft.status,
       createdAt: new Date(dbDraft.createdAt),
-      updatedAt: new Date(dbDraft.updatedAt)
+      updatedAt: new Date(dbDraft.updatedAt),
     };
   }
 }

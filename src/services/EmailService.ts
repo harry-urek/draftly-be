@@ -2,8 +2,17 @@ import { EmailRepository } from "../repositories/EmailRepository.js";
 import { UserRepository } from "../repositories/UserRepository.js";
 import { GmailIntegration } from "../integrations/GmailIntegration.js";
 import { VertexAIIntegration } from "../integrations/VertexAIIntegration.js";
-import { EmailThread, EmailDraft, EmailGenerationContext, AIStyleProfile } from "../types/index.js";
-import { ServiceResult, createSuccessResult, handleServiceError } from "../utils/errors.js";
+import {
+  EmailThread,
+  EmailDraft,
+  EmailGenerationContext,
+  AIStyleProfile,
+} from "../types/index.js";
+import {
+  ServiceResult,
+  createSuccessResult,
+  handleServiceError,
+} from "../utils/errors.js";
 
 export class EmailService {
   constructor(
@@ -13,14 +22,20 @@ export class EmailService {
     private vertexAIIntegration: VertexAIIntegration
   ) {}
 
-  async getThreads(firebaseUid: string, limit: number = 25): Promise<ServiceResult<EmailThread[]>> {
+  async getThreads(
+    firebaseUid: string,
+    limit: number = 25
+  ): Promise<ServiceResult<EmailThread[]>> {
     try {
       const user = await this.userRepository.findByFirebaseUid(firebaseUid);
       if (!user) {
-        return { success: false, error: 'User not found' };
+        return { success: false, error: "User not found" };
       }
 
-      const threads = await this.emailRepository.findThreadsByUserId(user.id, limit);
+      const threads = await this.emailRepository.findThreadsByUserId(
+        user.id,
+        limit
+      );
       return createSuccessResult(threads);
     } catch (error) {
       return handleServiceError(error);
@@ -31,7 +46,7 @@ export class EmailService {
     try {
       const thread = await this.emailRepository.findThreadById(threadId);
       if (!thread) {
-        return { success: false, error: 'Thread not found' };
+        return { success: false, error: "Thread not found" };
       }
       return createSuccessResult(thread);
     } catch (error) {
@@ -43,12 +58,12 @@ export class EmailService {
     try {
       const user = await this.userRepository.findByFirebaseUid(firebaseUid);
       if (!user) {
-        return { success: false, error: 'User not found' };
+        return { success: false, error: "User not found" };
       }
 
       const tokens = await this.userRepository.getTokens(firebaseUid);
       if (!tokens?.accessToken) {
-        return { success: false, error: 'Gmail tokens not found' };
+        return { success: false, error: "Gmail tokens not found" };
       }
 
       const messages = await this.gmailIntegration.getMessages(tokens);
@@ -56,8 +71,11 @@ export class EmailService {
 
       for (const message of messages) {
         // Create or find thread
-        let thread = await this.emailRepository.findThreadsByUserId(user.id)
-          .then(threads => threads.find(t => t.gmailId === message.threadId));
+        let thread = await this.emailRepository
+          .findThreadsByUserId(user.id)
+          .then((threads) =>
+            threads.find((t) => t.gmailId === message.threadId)
+          );
 
         if (!thread) {
           thread = await this.emailRepository.createThread(
@@ -78,13 +96,13 @@ export class EmailService {
             subject: message.subject,
             body: message.body || message.snippet,
             timestamp: new Date(message.date),
-            isUnread: message.isUnread
+            isUnread: message.isUnread,
           });
           syncedCount++;
         } catch (error: any) {
           // Skip if email already exists
-          if (!error.message?.includes('Unique constraint')) {
-            console.error('Error syncing email:', error);
+          if (!error.message?.includes("Unique constraint")) {
+            console.error("Error syncing email:", error);
           }
         }
       }
@@ -103,27 +121,36 @@ export class EmailService {
     try {
       const user = await this.userRepository.findByFirebaseUid(firebaseUid);
       if (!user) {
-        return { success: false, error: 'User not found' };
+        return { success: false, error: "User not found" };
       }
 
       // Get user's style profile
-      const styleProfile = await this.userRepository.getStyleProfile(firebaseUid);
+      const styleProfile = await this.userRepository.getStyleProfile(
+        firebaseUid
+      );
       if (!styleProfile) {
-        return { success: false, error: 'User style profile not found. Complete onboarding first.' };
+        return {
+          success: false,
+          error: "User style profile not found. Complete onboarding first.",
+        };
       }
 
       // Get thread details for context
       const thread = await this.emailRepository.findThreadById(threadId);
       if (!thread) {
-        return { success: false, error: 'Email thread not found' };
+        return { success: false, error: "Email thread not found" };
       }
 
       // Build email generation context
       const generationContext: EmailGenerationContext = {
-        originalEmail: context.originalEmail || thread.messages[thread.messages.length - 1]?.body || '',
-        threadHistory: context.threadHistory || thread.messages.map(m => m.body),
+        originalEmail:
+          context.originalEmail ||
+          thread.messages[thread.messages.length - 1]?.body ||
+          "",
+        threadHistory:
+          context.threadHistory || thread.messages.map((m) => m.body),
         tone: context.tone,
-        recipient: context.recipient
+        recipient: context.recipient,
       };
 
       // Generate draft using AI
@@ -138,7 +165,7 @@ export class EmailService {
         userId: user.id,
         content: draftContent,
         tone: context.tone,
-        status: 'PENDING'
+        status: "PENDING",
       });
 
       return createSuccessResult(draft);
@@ -154,20 +181,20 @@ export class EmailService {
     try {
       const user = await this.userRepository.findByFirebaseUid(firebaseUid);
       if (!user) {
-        return { success: false, error: 'User not found' };
+        return { success: false, error: "User not found" };
       }
 
       // Get tokens for Gmail API
       const tokens = await this.userRepository.getTokens(firebaseUid);
       if (!tokens?.accessToken) {
-        return { success: false, error: 'Gmail tokens not found' };
+        return { success: false, error: "Gmail tokens not found" };
       }
 
       // Get draft details (implementation would need to be added to repository)
       // For now, return a placeholder
-      await this.emailRepository.updateDraftStatus(draftId, 'SENT');
-      
-      return createSuccessResult('Email sent successfully');
+      await this.emailRepository.updateDraftStatus(draftId, "SENT");
+
+      return createSuccessResult("Email sent successfully");
     } catch (error) {
       return handleServiceError(error);
     }
@@ -177,7 +204,7 @@ export class EmailService {
     try {
       const user = await this.userRepository.findByFirebaseUid(firebaseUid);
       if (!user) {
-        return { success: false, error: 'User not found' };
+        return { success: false, error: "User not found" };
       }
 
       const drafts = await this.emailRepository.findDraftsByUserId(user.id);

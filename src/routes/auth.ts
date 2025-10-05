@@ -17,7 +17,7 @@ import { prisma } from "../lib/prisma.js";
 
 export default async function authRoutes(fastify: FastifyInstance) {
   // Blueprint Section 1.3 & 2.1: User registration/login
-  fastify.post("/register", requireAuth(), async (request, reply) => {
+  fastify.post("/register", { preHandler: requireAuth() }, async (request, reply) => {
     try {
       const user = request.firebaseUser!;
 
@@ -32,7 +32,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       // Step 2: Check if user has valid Gmail tokens
       const tokens = await getUserTokensDecrypted(user.firebaseUid);
       const hasStoredTokens = tokens?.accessToken && tokens?.refreshToken;
-      
+
       // If no stored tokens, definitely need auth
       if (!hasStoredTokens) {
         return reply.status(201).send({
@@ -45,10 +45,12 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
       // If we have stored tokens, validate them by making a test API call
       const areTokensValid = await validateGmailTokens(user.firebaseUid);
-      
+
       if (!areTokensValid) {
         // Stored tokens are invalid/expired - need fresh auth
-        console.log(`Stored Gmail tokens are invalid for user ${user.firebaseUid}, requiring re-auth`);
+        console.log(
+          `Stored Gmail tokens are invalid for user ${user.firebaseUid}, requiring re-auth`
+        );
         return reply.status(201).send({
           userId: profile.firebaseUid,
           status: "registered",
@@ -58,8 +60,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
       }
 
       // User already has valid tokens - check onboarding status
-      const isNewUser = profile.onboardingStatus === "NOT_STARTED" || 
-                       profile.onboardingStatus === "GMAIL_CONNECTED";
+      const isNewUser =
+        profile.onboardingStatus === "NOT_STARTED" ||
+        profile.onboardingStatus === "GMAIL_CONNECTED";
 
       if (isNewUser) {
         // Returning user but needs to complete onboarding
@@ -98,7 +101,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
   // Get current user profile
   // Profile endpoint: GET /auth/me
-  fastify.get("/me", requireAuth(), async (request, reply) => {
+  fastify.get("/me", { preHandler: requireAuth() }, async (request, reply) => {
     try {
       const user = request.firebaseUser!;
       const profile = await getUserProfile(user.firebaseUid);
@@ -127,7 +130,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
   // Check authentication status - for returning users
   // Status endpoint: GET /auth/status
-  fastify.get("/status", requireAuth(), async (request, reply) => {
+  fastify.get("/status", { preHandler: requireAuth() }, async (request, reply) => {
     try {
       const user = request.firebaseUser!;
       const profile = await getUserProfile(user.firebaseUid);
@@ -139,14 +142,15 @@ export default async function authRoutes(fastify: FastifyInstance) {
       // Check if user has valid Gmail tokens
       const tokens = await getUserTokensDecrypted(user.firebaseUid);
       const hasStoredTokens = tokens?.accessToken && tokens?.refreshToken;
-      
+
       let hasValidGmailAuth = false;
       if (hasStoredTokens) {
         hasValidGmailAuth = await validateGmailTokens(user.firebaseUid);
       }
 
-      const needsOnboarding = profile.onboardingStatus === "NOT_STARTED" || 
-                             profile.onboardingStatus === "GMAIL_CONNECTED";
+      const needsOnboarding =
+        profile.onboardingStatus === "NOT_STARTED" ||
+        profile.onboardingStatus === "GMAIL_CONNECTED";
 
       return reply.send({
         userId: profile.firebaseUid,
@@ -239,7 +243,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
   });
 
   // Logout endpoint
-  fastify.post("/session/logout", requireAuth(), async (request, reply) => {
+  fastify.post("/session/logout", { preHandler: requireAuth() }, async (request, reply) => {
     try {
       const user = request.firebaseUser!;
 

@@ -12,13 +12,13 @@ export interface User {
   isOnline: boolean;
 }
 
-export type OnboardingStatus = 
-  | 'NOT_STARTED'
-  | 'GMAIL_CONNECTED'
-  | 'QUESTIONNAIRE_IN_PROGRESS'
-  | 'QUESTIONNAIRE_COMPLETED'
-  | 'PROFILE_GENERATING'
-  | 'ACTIVE';
+export type OnboardingStatus =
+  | "NOT_STARTED"
+  | "GMAIL_CONNECTED"
+  | "QUESTIONNAIRE_IN_PROGRESS"
+  | "QUESTIONNAIRE_COMPLETED"
+  | "PROFILE_GENERATING"
+  | "ACTIVE";
 
 // Auth related types
 export interface AuthTokens {
@@ -65,7 +65,7 @@ export interface EmailDraft {
   updatedAt: Date;
 }
 
-export type DraftStatus = 'PENDING' | 'SENT' | 'FAILED';
+export type DraftStatus = "PENDING" | "SENT" | "FAILED";
 
 // AI Style Profile types
 export interface AIStyleProfile {
@@ -168,6 +168,6 @@ export interface EmailGenerationContext {
   recipient?: {
     name?: string;
     email: string;
-    relationship?: 'colleague' | 'client' | 'manager' | 'other';
+    relationship?: "colleague" | "client" | "manager" | "other";
   };
 }
