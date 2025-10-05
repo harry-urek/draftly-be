@@ -5,21 +5,23 @@ import {
   getUserProfile,
   storeUserTokens,
   setUserOffline,
+  getUserTokensDecrypted,
 } from "../lib/user.js";
 import {
   getAuthUrl,
   getTokensFromCode,
   syncUserMessages,
+  validateGmailTokens,
 } from "../lib/gmail.js";
 import { prisma } from "../lib/prisma.js";
 
 export default async function authRoutes(fastify: FastifyInstance) {
-  // Blueprint Section 1.3 & 2.1: User registration
+  // Blueprint Section 1.3 & 2.1: User registration/login
   fastify.post("/register", requireAuth(), async (request, reply) => {
     try {
       const user = request.firebaseUser!;
 
-      // Step 1: Create user record in database (Blueprint Section 2.1)
+      // Step 1: Create or update user record in database (Blueprint Section 2.1)
       const profile = await registerUser({
         firebaseUid: user.firebaseUid,
         email: user.email,
@@ -27,35 +29,68 @@ export default async function authRoutes(fastify: FastifyInstance) {
         picture: user.picture,
       });
 
-      // Step 2: Check if user has Gmail tokens
-      const hasGmailTokens = profile.accessToken && profile.refreshToken;
-
-      if (!hasGmailTokens) {
-        // User needs to authorize Gmail access via OAuth redirect
+      // Step 2: Check if user has valid Gmail tokens
+      const tokens = await getUserTokensDecrypted(user.firebaseUid);
+      const hasStoredTokens = tokens?.accessToken && tokens?.refreshToken;
+      
+      // If no stored tokens, definitely need auth
+      if (!hasStoredTokens) {
         return reply.status(201).send({
           userId: profile.firebaseUid,
           status: "registered",
           needsGmailAuth: true,
+          onboardingStatus: profile.onboardingStatus,
         });
       }
 
-      // User already has tokens, trigger sync
+      // If we have stored tokens, validate them by making a test API call
+      const areTokensValid = await validateGmailTokens(user.firebaseUid);
+      
+      if (!areTokensValid) {
+        // Stored tokens are invalid/expired - need fresh auth
+        console.log(`Stored Gmail tokens are invalid for user ${user.firebaseUid}, requiring re-auth`);
+        return reply.status(201).send({
+          userId: profile.firebaseUid,
+          status: "registered",
+          needsGmailAuth: true,
+          onboardingStatus: profile.onboardingStatus,
+        });
+      }
+
+      // User already has valid tokens - check onboarding status
+      const isNewUser = profile.onboardingStatus === "NOT_STARTED" || 
+                       profile.onboardingStatus === "GMAIL_CONNECTED";
+
+      if (isNewUser) {
+        // Returning user but needs to complete onboarding
+        return reply.status(201).send({
+          userId: profile.firebaseUid,
+          status: "registered",
+          needsGmailAuth: false,
+          needsOnboarding: true,
+          onboardingStatus: profile.onboardingStatus,
+        });
+      }
+
+      // Existing user with completed onboarding - trigger sync and allow immediate access
       syncUserMessages(user.firebaseUid).catch((err) =>
-        console.error("Initial sync failed:", err)
+        console.error("Background sync failed:", err)
       );
 
-      return reply.status(201).send({
+      return reply.status(200).send({
         userId: profile.firebaseUid,
-        status: "registered",
+        status: "authenticated",
         needsGmailAuth: false,
+        needsOnboarding: false,
+        onboardingStatus: profile.onboardingStatus,
       });
     } catch (error) {
-      console.error("Registration error:", error);
+      console.error("Registration/Login error:", error);
       if (error instanceof Error) {
         console.error("Error details:", error.message, error.stack);
       }
       return reply.status(500).send({
-        error: "Failed to register user",
+        error: "Failed to authenticate user",
         details: error instanceof Error ? error.message : "Unknown error",
       });
     }
@@ -79,12 +114,58 @@ export default async function authRoutes(fastify: FastifyInstance) {
           name: profile.name,
           picture: profile.picture,
           accessToken: profile.accessToken ? "present" : undefined,
+          onboardingStatus: profile.onboardingStatus,
         },
       });
     } catch (error) {
       console.error("Get profile error:", error);
       return reply.status(500).send({
         error: "Failed to get user profile",
+      });
+    }
+  });
+
+  // Check authentication status - for returning users
+  // Status endpoint: GET /auth/status
+  fastify.get("/status", requireAuth(), async (request, reply) => {
+    try {
+      const user = request.firebaseUser!;
+      const profile = await getUserProfile(user.firebaseUid);
+
+      if (!profile) {
+        return reply.status(404).send({ error: "User not found" });
+      }
+
+      // Check if user has valid Gmail tokens
+      const tokens = await getUserTokensDecrypted(user.firebaseUid);
+      const hasStoredTokens = tokens?.accessToken && tokens?.refreshToken;
+      
+      let hasValidGmailAuth = false;
+      if (hasStoredTokens) {
+        hasValidGmailAuth = await validateGmailTokens(user.firebaseUid);
+      }
+
+      const needsOnboarding = profile.onboardingStatus === "NOT_STARTED" || 
+                             profile.onboardingStatus === "GMAIL_CONNECTED";
+
+      return reply.send({
+        userId: profile.firebaseUid,
+        authenticated: true,
+        hasValidGmailAuth,
+        needsGmailAuth: !hasValidGmailAuth,
+        needsOnboarding,
+        onboardingStatus: profile.onboardingStatus,
+        user: {
+          id: profile.firebaseUid,
+          email: profile.email,
+          name: profile.name,
+          picture: profile.picture,
+        },
+      });
+    } catch (error) {
+      console.error("Get auth status error:", error);
+      return reply.status(500).send({
+        error: "Failed to get auth status",
       });
     }
   });

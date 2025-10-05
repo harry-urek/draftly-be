@@ -57,6 +57,7 @@ export interface UserProfile extends UserData {
   updatedAt: Date;
   lastActive: Date;
   isOnline: boolean;
+  onboardingStatus: string;
 }
 
 const AES_ALGORITHM = "aes-256-gcm";
@@ -236,6 +237,7 @@ function toUserProfile(
     isOnline: isOnlineOverride ?? user.isOnline,
     createdAt,
     updatedAt,
+    onboardingStatus: user.onboardingStatus,
   };
 }
 

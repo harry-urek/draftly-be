@@ -1,11 +1,13 @@
 import { FastifyInstance } from "fastify";
-import { requireAuth } from "../middleware/auth.js";
-import { getGmailMessages, syncUserMessages } from "../lib/gmail.js";
+import { requireAuth, requireGmailPermissions } from "../middleware/auth.js";
+import { getGmailMessages, syncUserMessages, getGmailMessage, sendEmailReply } from "../lib/gmail.js";
+import { generateEmailDraft } from "../lib/vertexai.js";
+import { prisma } from "../lib/prisma.js";
 import redis from "../lib/cache.js";
 
 export default async function emailRoutes(fastify: FastifyInstance) {
   // Get inbox messages
-  fastify.get("/mail/messages", requireAuth(), async (request, reply) => {
+  fastify.get("/mail/messages", requireGmailPermissions(), async (request, reply) => {
     try {
       const user = request.firebaseUser!;
       const cacheKey = `user:${user.firebaseUid}:inbox`;
@@ -33,7 +35,7 @@ export default async function emailRoutes(fastify: FastifyInstance) {
   });
 
   // Force sync messages from Gmail (triggered by refresh)
-  fastify.post("/mail/sync", requireAuth(), async (request, reply) => {
+  fastify.post("/mail/sync", requireGmailPermissions(), async (request, reply) => {
     try {
       const user = request.firebaseUser!;
 
@@ -55,7 +57,7 @@ export default async function emailRoutes(fastify: FastifyInstance) {
   });
 
   // Force refresh - immediately fetch fresh messages from Gmail
-  fastify.get("/mail/refresh", requireAuth(), async (request, reply) => {
+  fastify.get("/mail/refresh", requireGmailPermissions(), async (request, reply) => {
     try {
       const user = request.firebaseUser!;
 
@@ -79,8 +81,129 @@ export default async function emailRoutes(fastify: FastifyInstance) {
   });
 
   // Get a single email message by ID
-  fastify.get("/mail/messages/:id", requireAuth(), async (request, reply) => {
-    // Implementation for fetching a single message can be added here
-    return reply.status(501).send({ error: "Not implemented" });
+  fastify.get("/mail/messages/:id", requireGmailPermissions(), async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const user = request.firebaseUser!;
+      
+      const message = await getGmailMessage(user.firebaseUid, id);
+      
+      return reply.send({ message });
+    } catch (error) {
+      console.error("Get message error:", error);
+      return reply.status(500).send({
+        error: "Failed to fetch message",
+      });
+    }
+  });
+
+  // Generate email draft using AI
+  fastify.post("/mail/draft", requireGmailPermissions(), async (request, reply) => {
+    try {
+      const user = request.firebaseUser!;
+      const { messageId, tone } = request.body as {
+        messageId: string;
+        tone?: string;
+      };
+
+      if (!messageId) {
+        return reply.status(400).send({
+          error: "Message ID is required",
+        });
+      }
+
+      // Get the original message
+      const originalMessage = await getGmailMessage(user.firebaseUid, messageId);
+      
+      // Get user's style profile from database
+      const userRecord = await prisma.user.findUnique({
+        where: { firebaseUid: user.firebaseUid },
+      });
+      
+      const styleProfile = userRecord?.aiStyleProfile;
+      
+      if (!styleProfile) {
+        return reply.status(400).send({
+          error: "User style profile not found. Please complete onboarding first.",
+        });
+      }
+
+      // Generate draft using Vertex AI
+      const draft = await generateEmailDraft(
+        styleProfile,
+        {
+          originalEmail: originalMessage.body || originalMessage.snippet,
+          tone,
+        }
+      );
+
+      return reply.send({
+        draft,
+        originalMessage: {
+          id: originalMessage.id,
+          subject: originalMessage.subject,
+          from: originalMessage.from,
+          threadId: originalMessage.threadId,
+        },
+      });
+    } catch (error) {
+      console.error("Draft generation error:", error);
+      return reply.status(500).send({
+        error: "Failed to generate email draft",
+      });
+    }
+  });
+
+  // Send email reply
+  fastify.post("/mail/send", requireGmailPermissions(), async (request, reply) => {
+    try {
+      const user = request.firebaseUser!;
+      const { 
+        to, 
+        subject, 
+        body, 
+        threadId, 
+        inReplyTo, 
+        references 
+      } = request.body as {
+        to: string;
+        subject: string;
+        body: string;
+        threadId?: string;
+        inReplyTo?: string;
+        references?: string;
+      };
+
+      if (!to || !subject || !body) {
+        return reply.status(400).send({
+          error: "To, subject, and body are required",
+        });
+      }
+
+      // Send the email
+      const result = await sendEmailReply(user.firebaseUid, {
+        to,
+        subject,
+        body,
+        threadId,
+        inReplyTo,
+        references,
+      });
+
+      // Clear inbox cache to trigger refresh
+      const cacheKey = `user:${user.firebaseUid}:inbox`;
+      await redis.del(cacheKey);
+
+      return reply.send({
+        success: true,
+        messageId: result.messageId,
+        threadId: result.threadId,
+      });
+    } catch (error) {
+      console.error("Send email error:", error);
+      return reply.status(500).send({
+        error: "Failed to send email",
+      });
+    }
   });
 }

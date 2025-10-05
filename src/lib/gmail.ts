@@ -104,6 +104,43 @@ export async function getUserInfo(accessToken: string) {
   return data;
 }
 
+/**
+ * Validates if stored Gmail tokens are still valid by making a test API call
+ * @param firebaseUid - User's Firebase UID
+ * @returns true if tokens are valid and working, false otherwise
+ */
+export async function validateGmailTokens(firebaseUid: string): Promise<boolean> {
+  try {
+    const tokens = await getUserTokensDecrypted(firebaseUid);
+    if (!tokens?.accessToken) {
+      return false;
+    }
+
+    const oauth2Client = createOAuth2Client();
+    oauth2Client.setCredentials({
+      access_token: tokens.accessToken,
+      refresh_token: tokens.refreshToken,
+    });
+
+    // Make a simple test call to verify token validity
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+    await gmail.users.getProfile({ userId: "me" });
+    
+    // If the call succeeds, tokens are valid
+    return true;
+  } catch (error: any) {
+    // If we get authentication errors, tokens are invalid
+    if (error.code === 401 || error.code === 403) {
+      console.log(`Invalid Gmail tokens for user ${firebaseUid}: ${error.message}`);
+      return false;
+    }
+    
+    // For other errors, assume tokens might be valid but there's a temporary issue
+    console.warn(`Error validating Gmail tokens for user ${firebaseUid}:`, error.message);
+    return false;
+  }
+}
+
 export async function getGmailMessages(
   firebaseUid: string,
   maxResults: number = 25
@@ -268,5 +305,160 @@ export async function syncUserMessages(firebaseUid: string): Promise<void> {
 
     // Don't throw the error to prevent breaking the application
     // Just log it and continue
+  }
+}
+
+/**
+ * Send an email reply using Gmail API
+ * @param firebaseUid - User's Firebase UID
+ * @param replyData - Email reply data
+ * @returns Sent message information
+ */
+export async function sendEmailReply(
+  firebaseUid: string,
+  replyData: {
+    to: string;
+    subject: string;
+    body: string;
+    threadId?: string;
+    inReplyTo?: string;
+    references?: string;
+  }
+): Promise<{ messageId: string; threadId: string }> {
+  try {
+    // Get user's decrypted tokens
+    const tokens = await getUserTokensDecrypted(firebaseUid);
+    const accessToken = tokens?.accessToken;
+    const refreshToken = tokens?.refreshToken;
+
+    if (!accessToken && !refreshToken) {
+      throw new Error("No Gmail tokens available for user");
+    }
+
+    // Build OAuth client
+    const oauth2Client = createOAuth2Client();
+    oauth2Client.setCredentials({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
+    // Get user's email address
+    const profile = await gmail.users.getProfile({ userId: "me" });
+    const userEmail = profile.data.emailAddress;
+
+    // Prepare email headers
+    let emailContent = `From: ${userEmail}\r\n`;
+    emailContent += `To: ${replyData.to}\r\n`;
+    emailContent += `Subject: ${replyData.subject}\r\n`;
+    
+    if (replyData.inReplyTo) {
+      emailContent += `In-Reply-To: ${replyData.inReplyTo}\r\n`;
+    }
+    
+    if (replyData.references) {
+      emailContent += `References: ${replyData.references}\r\n`;
+    }
+    
+    emailContent += `Content-Type: text/html; charset=utf-8\r\n`;
+    emailContent += `\r\n`;
+    emailContent += replyData.body;
+
+    // Encode the email content
+    const encodedMessage = Buffer.from(emailContent)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    // Send the email
+    const response = await gmail.users.messages.send({
+      userId: "me",
+      requestBody: {
+        raw: encodedMessage,
+        threadId: replyData.threadId,
+      },
+    });
+
+    console.log(`[Gmail] Email sent successfully for user ${firebaseUid}`);
+
+    return {
+      messageId: response.data.id!,
+      threadId: response.data.threadId!,
+    };
+  } catch (error) {
+    console.error("[Gmail] Failed to send email reply:", error);
+    throw new Error("Failed to send email reply");
+  }
+}
+
+/**
+ * Get a single Gmail message by ID
+ * @param firebaseUid - User's Firebase UID
+ * @param msgId - Gmail message ID
+ * @returns Gmail message details
+ */
+export async function getGmailMessage(
+  firebaseUid: string,
+  msgId: string
+): Promise<GmailMessage & { messageId: string }> {
+  try {
+    // Get user's decrypted tokens
+    const tokens = await getUserTokensDecrypted(firebaseUid);
+    const accessToken = tokens?.accessToken;
+    const refreshToken = tokens?.refreshToken;
+
+    if (!accessToken && !refreshToken) {
+      throw new Error("No Gmail tokens available for user");
+    }
+
+    // Build OAuth client
+    const oauth2Client = createOAuth2Client();
+    oauth2Client.setCredentials({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
+    // Get message details
+    const messageDetail: any = await gmail.users.messages.get({
+      userId: "me",
+      id: msgId,
+      format: "full",
+    });
+
+    const headers: any[] = messageDetail.data.payload?.headers || [];
+    const subject =
+      headers.find((h: any) => h.name === "Subject")?.value || "No Subject";
+    const from = headers.find((h: any) => h.name === "From")?.value || "Unknown";
+    const to = headers.find((h: any) => h.name === "To")?.value || "";
+    const date =
+      headers.find((h: any) => h.name === "Date")?.value ||
+      new Date().toISOString();
+    const messageIdHeader: string = headers.find((h: any) => h.name === "Message-ID")?.value || "";
+
+    const isUnread =
+      messageDetail.data.labelIds?.includes("UNREAD") || false;
+
+    // Extract body from payload
+    const body = extractBody(messageDetail.data.payload);
+
+    return {
+      id: messageDetail.data.id!,
+      threadId: messageDetail.data.threadId || "",
+      subject,
+      from,
+      to,
+      date,
+      snippet: messageDetail.data.snippet || "",
+      body,
+      isUnread,
+      messageId: messageIdHeader, // Add Message-ID for threading
+    };
+  } catch (error) {
+    console.error(`[Gmail] Failed to get message ${msgId}:`, error);
+    throw new Error("Failed to get message");
   }
 }

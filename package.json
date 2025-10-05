@@ -27,7 +27,6 @@
     "@fastify/swagger": "^9.5.1",
     "@fastify/swagger-ui": "^5.2.3",
     "@google-cloud/vertexai": "^1.10.0",
-    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^6.16.2",
     "@slack/webhook": "^7.0.6",
     "@types/node": "^24.5.0",

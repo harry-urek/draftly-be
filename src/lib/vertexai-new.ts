@@ -4,12 +4,12 @@ import * as path from "path";
 
 // Initialize Vertex AI
 const vertex_ai = new VertexAI({
-  project: process.env.VERTEX_AI_PROJECT_ID || "draftly-4572a",
+  project: process.env.VERTEX_AI_PROJECT_ID || "draftly-473408",
   location: process.env.VERTEX_AI_LOCATION || "us-central1",
 });
 
 const generativeModel = vertex_ai.getGenerativeModel({
-  model: "gemini-2.0-flash-001",
+  model: "gemini-1.5-pro-001",
 });
 
 console.log("[AI] Using Vertex AI");
@@ -373,7 +373,7 @@ export async function testVertexAIConnection(): Promise<{
     // Test Vertex AI
     console.log("[AI] Testing Vertex AI connection...");
 
-    const projectId = process.env.VERTEX_AI_PROJECT_ID || "draftly-4572a";
+    const projectId = process.env.VERTEX_AI_PROJECT_ID || "draftly-473408";
     const location = process.env.VERTEX_AI_LOCATION || "us-central1";
 
     // Check environment variables
@@ -420,7 +420,7 @@ export async function testVertexAIConnection(): Promise<{
     console.log("[AI] ✓ Vertex AI connection successful");
     console.log(`[AI] Project: ${projectId}`);
     console.log(`[AI] Location: ${location}`);
-    console.log(`[AI] Model: gemini-2.0-flash-001`);
+    console.log(`[AI] Model: gemini-1.5-pro-001`);
 
     return { connected: true, provider: "Vertex AI" };
   } catch (error: any) {
