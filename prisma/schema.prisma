@@ -1,0 +1,130 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String          @id @default(auto()) @map("_id") @db.ObjectId
+  email               String          @unique
+  name                String?
+  picture             String?
+  firebaseUid         String          @unique
+  googleId            String?         @unique
+  accessToken         String?         // Encrypted
+  refreshToken        String?         // Encrypted
+  lastActive          DateTime        @default(now())
+  isOnline            Boolean         @default(false)
+  onboardingStatus    OnboardingStatus @default(NOT_STARTED)
+  questionnaireData   Json?           // Stores complete questionnaire responses
+  aiStyleProfile      Json?           // Generated AI style profile from LLM
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  
+  // Relations
+  emails       Email[]
+  threads      Thread[]
+  drafts       Draft[]
+  
+  @@map("users")
+}
+
+enum OnboardingStatus {
+  NOT_STARTED
+  GMAIL_CONNECTED
+  QUESTIONNAIRE_IN_PROGRESS
+  QUESTIONNAIRE_COMPLETED
+  PROFILE_GENERATING
+  ACTIVE
+}
+
+model Thread {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  gmailId   String   @unique
+  subject   String
+  userId    String   @db.ObjectId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emails    Email[]
+  drafts    Draft[]
+  
+  @@map("threads")
+}
+
+model Email {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  gmailId   String   @unique
+  threadId  String   @db.ObjectId
+  userId    String   @db.ObjectId
+  from      String
+  to        String
+  subject   String
+  body      String
+  htmlBody  String?
+  timestamp DateTime
+  isUnread  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  thread    Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  
+  @@map("emails")
+}
+
+model Draft {
+  id        String      @id @default(auto()) @map("_id") @db.ObjectId
+  threadId  String      @db.ObjectId
+  userId    String      @db.ObjectId
+  content   String
+  status    DraftStatus @default(PENDING)
+  tone      String?     // formal, casual, friendly
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  sentAt    DateTime?
+  
+  // Relations
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  thread    Thread      @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  events    DraftEvent[]
+  
+  @@map("drafts")
+}
+
+model DraftEvent {
+  id        String          @id @default(auto()) @map("_id") @db.ObjectId
+  draftId   String          @db.ObjectId
+  action    DraftAction
+  metadata  Json?
+  createdAt DateTime        @default(now())
+  
+  // Relations
+  draft     Draft           @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  
+  @@map("draft_events")
+}
+
+enum DraftStatus {
+  PENDING
+  APPROVED
+  EDITED
+  REJECTED
+  SENT
+}
+
+enum DraftAction {
+  CREATED
+  APPROVED
+  EDITED
+  REJECTED
+  SENT
+}

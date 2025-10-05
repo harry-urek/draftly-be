@@ -3,15 +3,39 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
 # Environment variables
 .env
+.env.*
+!.env.example
 .env.local
+.env.development
 .env.production
+.env.test
+.env.backup
+
+# TypeScript
+*.tsbuildinfo
+dist/
+build/
+out/
+*.js.map
+*.d.ts.map
 
 # Database
 *.db
 *.sqlite
+*.sqlite3
+
+# Prisma
+prisma/migrations/*
+!prisma/migrations/.gitkeep
+.env.backup
 
 # Logs
 logs/
@@ -20,25 +44,32 @@ pids/
 *.pid
 *.seed
 *.pid.lock
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Runtime data
 .runtime/
 .temp/
+tmp/
+temp/
 
-# Coverage directory used by tools like istanbul
+# Testing
 coverage/
 .nyc_output/
+*.lcov
+.jest/
 
-# Compiled binary addons
-build/Release/
+# Build outputs
+build/
+dist/
+Release/
 
 # Dependency directories
 .npm/
 .pnp/
 .pnp.js
-
-# TypeScript cache
-*.tsbuildinfo
+bower_components/
 
 # Optional npm cache directory
 .npm/
@@ -49,61 +80,110 @@ build/Release/
 # Output of 'npm pack'
 *.tgz
 
-# Yarn Integrity file
+# Yarn
 .yarn-integrity
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
 
-# dotenv environment variables file
-.env.test
-
-# parcel-bundler cache
+# Cache
 .cache/
 .parcel-cache/
+.eslintcache
+.stylelintcache
 
-# next.js build output
+# Next.js (if used)
 .next/
-
-# nuxt.js build output
 .nuxt/
-
-# vuepress build output
 .vuepress/dist/
 
-# Serverless directories
+# Serverless
 .serverless/
 
-# FuseBox cache
+# FuseBox
 .fusebox/
 
-# DynamoDB Local files
+# DynamoDB Local
 .dynamodb/
 
-# TernJS port file
+# TernJS
 .tern-port
 
-# IDE
-.vscode/
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# IDE - IntelliJ / WebStorm
 .idea/
+*.iml
+*.iws
+*.ipr
 *.swp
 *.swo
 *~
 
-# OS
+# OS - macOS
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
+.AppleDouble
+.LSOverride
+
+# OS - Windows
 ehthumbs.db
 Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# OS - Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
 
 # Docker
 docker-compose.override.yml
+.dockerignore
+*.dockerfile
 
-# Prisma
-prisma/migrations/
-.env.backup
-
-# Google Cloud credentials
+# Google Cloud / Firebase credentials
 vertex-ai-key.json
 *-service-account.json
 gcp-credentials.json
+fireabse-service.json
+firebase-service.json
+firebase-adminsdk-*.json
+service-account-*.json
+*-key.json
+*.pem
+
+# SSL Certificates (if not needed in repo)
+*.crt
+*.key
+*.pem
+ssl/
+
+# Fastify specific
+fastify-cli-*.json
+
+# Backup files
+*.backup
+*.bak
+*.old
+*.orig
+
+# Lock files (optional - uncomment if you want to ignore them)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml

@@ -1,0 +1,48 @@
+{
+  "name": "draftly-server",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio"
+  },
+  "keywords": [
+    "email",
+    "ai",
+    "fastify",
+    "gmail"
+  ],
+  "author": "",
+  "license": "ISC",
+  "description": "Draftly Gmail AI Reply Agent Backend",
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.1.0",
+    "@fastify/jwt": "^10.0.0",
+    "@fastify/session": "^11.1.0",
+    "@fastify/swagger": "^9.5.1",
+    "@fastify/swagger-ui": "^5.2.3",
+    "@google-cloud/vertexai": "^1.10.0",
+    "@google/generative-ai": "^0.24.1",
+    "@prisma/client": "^6.16.2",
+    "@slack/webhook": "^7.0.6",
+    "@types/node": "^24.5.0",
+    "dotenv": "^17.2.2",
+    "fastify": "^5.6.0",
+    "firebase": "^12.3.0",
+    "firebase-admin": "^13.5.0",
+    "google-auth-library": "^10.3.0",
+    "googleapis": "^160.0.0",
+    "ioredis": "^5.7.0",
+    "mongodb": "^6.20.0",
+    "pino-pretty": "^13.1.1",
+    "prisma": "^6.16.2",
+    "redis": "^5.8.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
