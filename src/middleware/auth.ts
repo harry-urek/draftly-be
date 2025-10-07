@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from "fastify";
-import { auth, verifyFirebaseToken } from "../lib/firebase.js";
+import { firebaseIntegration } from "../integrations/FirebaseIntegration.js";
 import { slackNotifier } from "../lib/slack.js";
 
 export interface AuthenticatedUser {
@@ -38,10 +38,10 @@ export async function authMiddleware(
     }
 
     // Verify the Firebase ID token
-    const decodedToken = await verifyFirebaseToken(idToken);
+    const decodedToken = await firebaseIntegration.verifyIdToken(idToken);
 
     // Get user info from Firebase Auth
-    const userRecord = await auth.getUser(decodedToken.uid);
+    const userRecord = await firebaseIntegration.getAdminAuth().getUser(decodedToken.uid);
 
     // Attach user to request
     request.firebaseUser = {

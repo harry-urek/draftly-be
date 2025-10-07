@@ -26,6 +26,13 @@ export interface AuthTokens {
   refreshToken?: string;
 }
 
+export interface FirebaseUser {
+  firebaseUid: string;
+  email: string;
+  name?: string;
+  picture?: string;
+}
+
 // Email related types
 export interface EmailMessage {
   id: string;

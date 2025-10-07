@@ -1,3 +1,9 @@
+/**
+ * @deprecated This file is deprecated and will be removed soon.
+ * Please use the EmailController class in src/controllers/EmailController.ts instead.
+ * The new implementation follows the layered architecture pattern.
+ */
+
 import { FastifyInstance } from "fastify";
 import { requireAuth } from "../middleware/auth.js";
 import {

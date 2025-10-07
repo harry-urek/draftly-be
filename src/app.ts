@@ -22,6 +22,8 @@ import { UserService } from "./services/UserService.js";
 
 // Controllers
 import { AuthControllerImpl } from "./controllers/AuthController.js";
+import { EmailController } from "./controllers/EmailController.js";
+import { OnboardingController } from "./controllers/OnboardingController.js";
 
 // Initialize Prisma
 const prisma = new PrismaClient();
@@ -46,6 +48,8 @@ const userService = new UserService(userRepository, vertexAIIntegration);
 
 // Initialize controllers
 const authController = new AuthControllerImpl(authService);
+const emailController = new EmailController(emailService);
+const onboardingController = new OnboardingController();
 
 export async function createApp() {
   const fastify = Fastify({
@@ -134,95 +138,21 @@ export async function createApp() {
   // Register controller routes
   authController.registerRoutes(fastify);
 
-  // Email routes (simplified)
-  fastify.get(
-    "/api/emails/threads",
-    {
-      preHandler: [
-        async (request: any, reply: any) => {
-          // Simple auth check - in production this should use proper middleware
-          if (!request.headers.authorization) {
-            return reply.status(401).send({ error: "Unauthorized" });
-          }
-        },
-      ],
-    },
-    async (request, reply) => {
-      try {
-        const user = (request as any).firebaseUser!;
-        const { limit } = request.query as { limit?: string };
+  // Import auth middleware
+  const { requireAuth } = await import("./middleware/auth.js");
 
-        const result = await emailService.getThreads(
-          user.firebaseUid,
-          limit ? parseInt(limit) : 25
-        );
+  // Email routes
+  fastify.get("/api/emails", { preHandler: requireAuth() }, emailController.getMessages.bind(emailController));
+  fastify.post("/api/emails/sync", { preHandler: requireAuth() }, emailController.syncMessages.bind(emailController));
+  fastify.get("/api/emails/refresh", { preHandler: requireAuth() }, emailController.refreshMessages.bind(emailController));
+  fastify.get("/api/emails/:id", { preHandler: requireAuth() }, emailController.getMessage.bind(emailController));
+  fastify.post("/api/emails/draft", { preHandler: requireAuth() }, emailController.generateDraft.bind(emailController));
+  fastify.post("/api/emails/send", { preHandler: requireAuth() }, emailController.sendEmail.bind(emailController));
 
-        if (!result.success) {
-          return reply.status(500).send({ error: result.error });
-        }
-
-        return reply.send({ threads: result.data });
-      } catch (error) {
-        console.error("Get threads error:", error);
-        return reply.status(500).send({ error: "Failed to get email threads" });
-      }
-    }
-  );
-
-  fastify.post(
-    "/api/emails/sync",
-    { preHandler: [require("./middleware/auth.js").requireAuth()] },
-    async (request, reply) => {
-      try {
-        const user = (request as any).firebaseUser!;
-
-        const result = await emailService.syncUserEmails(user.firebaseUid);
-
-        if (!result.success) {
-          return reply.status(500).send({ error: result.error });
-        }
-
-        return reply.send({
-          message: "Emails synced successfully",
-          syncedCount: result.data,
-        });
-      } catch (error) {
-        console.error("Sync emails error:", error);
-        return reply.status(500).send({ error: "Failed to sync emails" });
-      }
-    }
-  );
-
-  // User/Onboarding routes (simplified)
-  fastify.post(
-    "/api/onboarding/generate-profile",
-    { preHandler: [require("./middleware/auth.js").requireAuth()] },
-    async (request, reply) => {
-      try {
-        const user = (request as any).firebaseUser!;
-        const questionnaireData = request.body as Record<string, any>;
-
-        const result = await userService.generateStyleProfile(
-          user.firebaseUid,
-          questionnaireData
-        );
-
-        if (!result.success) {
-          return reply.status(500).send({ error: result.error });
-        }
-
-        return reply.send({
-          message: "Style profile generated successfully",
-          profile: result.data,
-        });
-      } catch (error) {
-        console.error("Generate profile error:", error);
-        return reply
-          .status(500)
-          .send({ error: "Failed to generate style profile" });
-      }
-    }
-  );
+  // Onboarding routes
+  fastify.post("/api/onboarding/start", { preHandler: requireAuth() }, onboardingController.startQuestionnaire.bind(onboardingController));
+  fastify.get("/api/onboarding/status", { preHandler: requireAuth() }, onboardingController.getStatus.bind(onboardingController));
+  fastify.post("/api/onboarding/generate-profile", { preHandler: requireAuth() }, onboardingController.generateProfile.bind(onboardingController));
 
   // Global error handler
   fastify.setErrorHandler((error, request, reply) => {
