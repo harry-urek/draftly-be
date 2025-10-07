@@ -204,7 +204,7 @@ export class GmailIntegration {
   }
 
   getRefreshedTokens(): AuthTokens | null {
-    const credentials = this.oauth2Client.credentials;
+    const { credentials } = this.oauth2Client;
     if (!credentials.access_token) return null;
 
     return {

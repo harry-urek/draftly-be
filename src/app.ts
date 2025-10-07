@@ -1,29 +1,30 @@
-import Fastify from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { PrismaClient } from "@prisma/client";
+import Fastify from "fastify";
 
 import config from "./config/index.js";
-
-// Repositories
-import { UserRepository } from "./repositories/UserRepository.js";
-import { EmailRepository } from "./repositories/EmailRepository.js";
-
-// Integrations
-import { GmailIntegration } from "./integrations/GmailIntegration.js";
-import { VertexAIIntegration } from "./integrations/VertexAIIntegration.js";
-
-// Services
-import { AuthService } from "./services/AuthService.js";
-import { EmailService } from "./services/EmailService.js";
-import { UserService } from "./services/UserService.js";
+import { backgroundService } from "./lib/background.js";
 
 // Controllers
 import { AuthControllerImpl } from "./controllers/AuthController.js";
 import { EmailController } from "./controllers/EmailController.js";
 import { OnboardingController } from "./controllers/OnboardingController.js";
+
+// Integrations
+import { GmailIntegration } from "./integrations/GmailIntegration.js";
+import { VertexAIIntegration } from "./integrations/VertexAIIntegration.js";
+
+// Repositories
+import { EmailRepository } from "./repositories/EmailRepository.js";
+import { UserRepository } from "./repositories/UserRepository.js";
+
+// Services
+import { AuthService } from "./services/AuthService.js";
+import { EmailService } from "./services/EmailService.js";
+import { UserService } from "./services/UserService.js";
 
 // Initialize Prisma
 const prisma = new PrismaClient();
@@ -139,20 +140,58 @@ export async function createApp() {
   authController.registerRoutes(fastify);
 
   // Import auth middleware
-  const { requireAuth } = await import("./middleware/auth.js");
+  const { requireAuth, requireGmailAuth } = await import(
+    "./middleware/auth.js"
+  );
 
   // Email routes
-  fastify.get("/api/emails", { preHandler: requireAuth() }, emailController.getMessages.bind(emailController));
-  fastify.post("/api/emails/sync", { preHandler: requireAuth() }, emailController.syncMessages.bind(emailController));
-  fastify.get("/api/emails/refresh", { preHandler: requireAuth() }, emailController.refreshMessages.bind(emailController));
-  fastify.get("/api/emails/:id", { preHandler: requireAuth() }, emailController.getMessage.bind(emailController));
-  fastify.post("/api/emails/draft", { preHandler: requireAuth() }, emailController.generateDraft.bind(emailController));
-  fastify.post("/api/emails/send", { preHandler: requireAuth() }, emailController.sendEmail.bind(emailController));
+  fastify.get(
+    "/api/emails",
+    { preHandler: requireGmailAuth },
+    emailController.getMessages.bind(emailController)
+  );
+  fastify.post(
+    "/api/emails/sync",
+    { preHandler: requireGmailAuth },
+    emailController.syncMessages.bind(emailController)
+  );
+  fastify.get(
+    "/api/emails/refresh",
+    { preHandler: requireGmailAuth },
+    emailController.refreshMessages.bind(emailController)
+  );
+  fastify.get(
+    "/api/emails/:id",
+    { preHandler: requireGmailAuth },
+    emailController.getMessage.bind(emailController)
+  );
+  fastify.post(
+    "/api/emails/draft",
+    { preHandler: requireGmailAuth },
+    emailController.generateDraft.bind(emailController)
+  );
+  fastify.post(
+    "/api/emails/send",
+    { preHandler: requireGmailAuth },
+    emailController.sendEmail.bind(emailController)
+  );
 
   // Onboarding routes
-  fastify.post("/api/onboarding/start", { preHandler: requireAuth() }, onboardingController.startQuestionnaire.bind(onboardingController));
-  fastify.get("/api/onboarding/status", { preHandler: requireAuth() }, onboardingController.getStatus.bind(onboardingController));
-  fastify.post("/api/onboarding/generate-profile", { preHandler: requireAuth() }, onboardingController.generateProfile.bind(onboardingController));
+  fastify.post(
+    "/api/onboarding/start",
+    { preHandler: requireAuth() },
+    onboardingController.startQuestionnaire.bind(onboardingController)
+  );
+  fastify.get(
+    "/api/onboarding/status",
+    { preHandler: requireAuth() },
+    onboardingController.getStatus.bind(onboardingController)
+  );
+  fastify.post(
+    "/api/onboarding/generate-profile",
+    { preHandler: requireAuth() },
+    onboardingController.generateProfile.bind(onboardingController)
+  );
 
   // Global error handler
   fastify.setErrorHandler((error, request, reply) => {
@@ -177,11 +216,16 @@ export async function createApp() {
 // Graceful shutdown
 async function gracefulShutdown() {
   try {
+    // Stop background service before disconnecting
+    backgroundService.stop();
+    // Use logger instead of console.log
+    process.stdout.write("✅ Background service stopped\n");
+
     await prisma.$disconnect();
-    console.log("✅ Database connection closed");
+    process.stdout.write("✅ Database connection closed\n");
     process.exit(0);
   } catch (error) {
-    console.error("❌ Error during shutdown:", error);
+    process.stderr.write(`❌ Error during shutdown: ${error}\n`);
     process.exit(1);
   }
 }
@@ -189,4 +233,4 @@ async function gracefulShutdown() {
 process.on("SIGINT", gracefulShutdown);
 process.on("SIGTERM", gracefulShutdown);
 
-export { prisma, userService, emailService, authService };
+export { prisma, userService, emailService, authService, backgroundService };

@@ -171,7 +171,7 @@ export class AuthControllerImpl implements AuthController {
           );
 
           if (!result.success) {
-            const frontendUrl = config.frontendUrl;
+            const { frontendUrl } = config;
             return reply.redirect(
               `${frontendUrl}?error=oauth_failed&message=${encodeURIComponent(
                 result.error || "OAuth failed"
@@ -180,11 +180,11 @@ export class AuthControllerImpl implements AuthController {
           }
 
           // Redirect to onboarding or success page
-          const frontendUrl = config.frontendUrl;
+          const { frontendUrl } = config;
           return reply.redirect(`${frontendUrl}/onboarding`);
         } catch (error) {
           console.error("Google OAuth callback error:", error);
-          const frontendUrl = config.frontendUrl;
+          const { frontendUrl } = config;
           return reply.redirect(`${frontendUrl}?error=oauth_failed`);
         }
       }

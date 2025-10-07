@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+
 import { User, AuthTokens } from "../types/index.js";
 import { tryEncrypt, tryDecrypt } from "../utils/encryption.js";
 
