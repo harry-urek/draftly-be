@@ -40,12 +40,11 @@ const requiredEnvVars = [
   "FIREBASE_PROJECT_ID",
   "FIREBASE_PRIVATE_KEY",
   "FIREBASE_CLIENT_EMAIL",
-  "FIREBASE_API_KEY",
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "GOOGLE_REDIRECT_URI",
   "VERTEX_AI_PROJECT_ID",
-  "REDIS_URL",
+  // REDIS_URL is preferred; if missing, we'll build from REDIS_HOST/REDIS_PORT
   "JWT_SECRET",
 ];
 
@@ -87,7 +86,11 @@ function createConfig(): AppConfig {
       process.env.GOOGLE_APPLICATION_CREDENTIALS || "",
 
     // Redis Configuration
-    redisUrl: process.env.REDIS_URL!,
+    redisUrl:
+      process.env.REDIS_URL ||
+      (process.env.REDIS_HOST
+        ? `redis://${process.env.REDIS_PASSWORD ? `${process.env.REDIS_PASSWORD}@` : ""}${process.env.REDIS_HOST}:${process.env.REDIS_PORT || "6379"}`
+        : ""),
 
     // Encryption
     tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY || "",
