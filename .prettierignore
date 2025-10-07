@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Coverage reports
+coverage/
+
+# Environment variables
+.env
+.env.*
+
+# Database
+*.db
+*.sqlite
+
+# Prisma
+prisma/migrations/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+
+# CI/CD
+.github/
+
+# Package files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

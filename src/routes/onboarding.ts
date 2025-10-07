@@ -9,7 +9,7 @@ import { generateStyleProfile } from "../lib/vertexai.js";
 
 export default async function onboardingRoutes(fastify: FastifyInstance) {
   // Start questionnaire and trigger background email fetching
-  fastify.post("/start", requireAuth(), async (request, reply) => {
+  fastify.post("/start", { preHandler: requireAuth() }, async (request, reply) => {
     try {
       const user = request.firebaseUser!;
 
@@ -37,7 +37,7 @@ export default async function onboardingRoutes(fastify: FastifyInstance) {
   });
 
   // Check onboarding status
-  fastify.get("/status", requireAuth(), async (request, reply) => {
+  fastify.get("/status", { preHandler: requireAuth() }, async (request, reply) => {
     try {
       const user = request.firebaseUser!;
 
@@ -68,7 +68,7 @@ export default async function onboardingRoutes(fastify: FastifyInstance) {
   });
 
   // Submit questionnaire responses
-  fastify.post("/submit", requireAuth(), async (request, reply) => {
+  fastify.post("/submit", { preHandler: requireAuth() }, async (request, reply) => {
     try {
       const user = request.firebaseUser!;
       const responses = request.body as QuestionnaireResponses;
@@ -107,7 +107,7 @@ export default async function onboardingRoutes(fastify: FastifyInstance) {
   });
 
   // Get AI-generated style profile
-  fastify.get("/profile", requireAuth(), async (request, reply) => {
+  fastify.get("/profile", { preHandler: requireAuth() }, async (request, reply) => {
     try {
       const user = request.firebaseUser!;
 
