@@ -1,6 +1,12 @@
+/* eslint-disable import/no-unresolved */
 import { FastifyRequest, FastifyReply } from "fastify";
-import { firebaseIntegration } from "../integrations/FirebaseIntegration.js";
-import { slackNotifier } from "../lib/slack.js";
+
+import { firebaseIntegration } from "../integrations/FirebaseIntegration";
+import { GmailIntegration } from "../integrations/GmailIntegration";
+import { prisma } from "../lib/prisma";
+import { slackNotifier } from "../lib/slack";
+import { setUserOnline } from "../lib/user";
+import { UserRepository } from "../repositories/UserRepository";
 
 export interface AuthenticatedUser {
   userId: string;
@@ -41,7 +47,9 @@ export async function authMiddleware(
     const decodedToken = await firebaseIntegration.verifyIdToken(idToken);
 
     // Get user info from Firebase Auth
-    const userRecord = await firebaseIntegration.getAdminAuth().getUser(decodedToken.uid);
+    const userRecord = await firebaseIntegration
+      .getAdminAuth()
+      .getUser(decodedToken.uid);
 
     // Attach user to request
     request.firebaseUser = {
@@ -57,6 +65,13 @@ export async function authMiddleware(
       userId: decodedToken.uid,
       email: decodedToken.email || userRecord.email || "",
     };
+
+    // Update presence so background sync can see online users
+    try {
+      await setUserOnline(decodedToken.uid);
+    } catch (e) {
+      request.log?.warn({ err: e }, "Failed to update user presence");
+    }
   } catch (error) {
     console.error("Auth middleware error:", (error as Error).message);
 
@@ -78,4 +93,63 @@ export async function authMiddleware(
 // Helper to require authentication on routes
 export function requireAuth() {
   return authMiddleware;
+}
+
+const gmailIntegration = new GmailIntegration();
+const userRepository = new UserRepository(prisma);
+
+// Enhanced middleware that checks Gmail permissions and forces re-verification
+export async function requireGmailAuth(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  try {
+    // First run the standard auth check
+    await authMiddleware(request, reply);
+
+    // If headers were sent, auth check failed
+    if (reply.sent) return;
+
+    const user = request.firebaseUser;
+    if (!user) {
+      return reply.status(401).send({ error: "Authentication required" });
+    }
+
+    // Check if user has valid Gmail credentials
+    const tokens = await userRepository.getTokens(user.firebaseUid);
+
+    if (!tokens || !tokens.accessToken) {
+      return reply.status(403).send({
+        error: "Gmail authentication required",
+        requiresAuth: "gmail",
+      });
+    }
+
+    try {
+      const validation = await gmailIntegration.validateTokens(tokens);
+      if (!validation.valid) {
+        return reply.status(403).send({
+          error: "Gmail authentication required",
+          requiresAuth: "gmail",
+        });
+      }
+
+      if (validation.refreshedTokens?.accessToken) {
+        await userRepository.storeTokens(
+          user.firebaseUid,
+          validation.refreshedTokens
+        );
+      }
+    } catch (err) {
+      request.log?.error({ err }, "Gmail token validation failed");
+      return reply
+        .status(500)
+        .send({ error: "Server error during authentication" });
+    }
+  } catch (error) {
+    console.error("Gmail auth middleware error:", error);
+    return reply
+      .status(500)
+      .send({ error: "Server error during authentication" });
+  }
 }

@@ -1,11 +1,15 @@
 import { VertexAI, SchemaType } from "@google-cloud/vertexai";
-import config from "../config/index.js";
-import { AIStyleProfile, EmailGenerationContext } from "../types/index.js";
-import { ExternalServiceError } from "../utils/errors.js";
+
+import config from "../config";
+import { AIStyleProfile, EmailGenerationContext } from "../types";
+import { ExternalServiceError } from "../utils/errors";
+
+// Using a type alias instead of 'any'
+type GenerativeAIModel = ReturnType<VertexAI["getGenerativeModel"]>;
 
 export class VertexAIIntegration {
   private vertex_ai: VertexAI;
-  private generativeModel: any;
+  private generativeModel: GenerativeAIModel;
 
   constructor() {
     this.vertex_ai = new VertexAI({
@@ -37,7 +41,7 @@ export class VertexAIIntegration {
   }
 
   async generateStyleProfile(
-    questionnaireData: Record<string, any>
+    questionnaireData: Record<string, unknown>
   ): Promise<AIStyleProfile> {
     try {
       const prompt = this.createStyleProfilePrompt(questionnaireData);
@@ -56,7 +60,7 @@ export class VertexAIIntegration {
         generationConfig,
       });
 
-      const response = result.response;
+      const { response } = result;
       const candidate = response.candidates?.[0];
       const content = candidate?.content;
       const part = content?.parts?.[0];
@@ -90,13 +94,12 @@ export class VertexAIIntegration {
         generationConfig,
       });
 
-      const response = result.response;
+      const { response } = result;
       const candidate = response.candidates?.[0];
       const content = candidate?.content;
       const part = content?.parts?.[0];
-      const draft = part?.text || "";
 
-      return draft;
+      return part?.text || "";
     } catch (error) {
       throw new ExternalServiceError(
         "Vertex AI",
@@ -106,7 +109,7 @@ export class VertexAIIntegration {
   }
 
   private createStyleProfilePrompt(
-    questionnaireData: Record<string, any>
+    questionnaireData: Record<string, unknown>
   ): string {
     return `
 Analyze the following user questionnaire responses and generate a comprehensive AI writing style profile.

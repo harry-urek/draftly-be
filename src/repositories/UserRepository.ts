@@ -1,5 +1,12 @@
-import { PrismaClient } from "@prisma/client";
-import { User, AuthTokens } from "../types/index.js";
+/* eslint-disable import/no-unresolved */
+import { PrismaClient, Prisma, User as PrismaUser } from "@prisma/client";
+
+import type {
+  User,
+  AuthTokens,
+  OnboardingStatus,
+  AIStyleProfile,
+} from "../types/index.js";
 import { tryEncrypt, tryDecrypt } from "../utils/encryption.js";
 
 export class UserRepository {
@@ -27,10 +34,14 @@ export class UserRepository {
   }
 
   async create(userData: Partial<User>): Promise<User> {
+    if (!userData.firebaseUid || !userData.email) {
+      throw new Error("firebaseUid and email are required to create a user");
+    }
+
     const user = await this.prisma.user.create({
       data: {
-        firebaseUid: userData.firebaseUid!,
-        email: userData.email!,
+        firebaseUid: userData.firebaseUid,
+        email: userData.email,
         name: userData.name,
         picture: userData.picture,
         lastActive: new Date(),
@@ -71,8 +82,37 @@ export class UserRepository {
     });
   }
 
+  async clearTokens(firebaseUid: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { firebaseUid },
+      data: {
+        accessToken: null,
+        refreshToken: null,
+      },
+    });
+  }
+
+  async purgeUserData(firebaseUid: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { firebaseUid },
+        select: { id: true },
+      });
+
+      if (!user) {
+        return;
+      }
+
+      const userId = user.id;
+
+      await tx.draft.deleteMany({ where: { userId } });
+      await tx.email.deleteMany({ where: { userId } });
+      await tx.thread.deleteMany({ where: { userId } });
+    });
+  }
+
   async storeTokens(firebaseUid: string, tokens: AuthTokens): Promise<void> {
-    const updateData: Record<string, string | undefined> = {};
+    const updateData: Record<string, string | Date | boolean | undefined> = {};
 
     if (tokens.accessToken) {
       updateData.accessToken = tryEncrypt(tokens.accessToken);
@@ -81,6 +121,10 @@ export class UserRepository {
     if (tokens.refreshToken) {
       updateData.refreshToken = tryEncrypt(tokens.refreshToken);
     }
+
+    // Refresh lastActive and mark user online when we store tokens
+    updateData.lastActive = new Date();
+    updateData.isOnline = true;
 
     if (Object.keys(updateData).length > 0) {
       await this.prisma.user.update({
@@ -109,36 +153,39 @@ export class UserRepository {
 
   async updateOnboardingStatus(
     firebaseUid: string,
-    status: string
+    status: OnboardingStatus
   ): Promise<void> {
     await this.prisma.user.update({
       where: { firebaseUid },
-      data: { onboardingStatus: status as any },
+      data: { onboardingStatus: status },
     });
   }
 
-  async storeStyleProfile(firebaseUid: string, profile: any): Promise<void> {
+  async storeStyleProfile(
+    firebaseUid: string,
+    profile: unknown
+  ): Promise<void> {
     await this.prisma.user.update({
       where: { firebaseUid },
-      data: { aiStyleProfile: profile },
+      data: { aiStyleProfile: profile as Prisma.JsonValue },
     });
   }
 
-  async getStyleProfile(firebaseUid: string): Promise<any | null> {
+  async getStyleProfile(firebaseUid: string): Promise<AIStyleProfile | null> {
     const user = await this.prisma.user.findUnique({
       where: { firebaseUid },
       select: { aiStyleProfile: true },
     });
-    return user?.aiStyleProfile || null;
+    return (user?.aiStyleProfile as AIStyleProfile | null) || null;
   }
 
-  private mapToUser(dbUser: any): User {
+  private mapToUser(dbUser: PrismaUser): User {
     return {
       id: dbUser.id,
       firebaseUid: dbUser.firebaseUid,
       email: dbUser.email,
-      name: dbUser.name,
-      picture: dbUser.picture,
+      name: dbUser.name ?? undefined,
+      picture: dbUser.picture ?? undefined,
       onboardingStatus: dbUser.onboardingStatus,
       createdAt: new Date(dbUser.createdAt),
       updatedAt: new Date(dbUser.updatedAt),

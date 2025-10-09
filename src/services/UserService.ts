@@ -1,11 +1,12 @@
-import { UserRepository } from "../repositories/UserRepository.js";
-import { VertexAIIntegration } from "../integrations/VertexAIIntegration.js";
-import { User, AIStyleProfile } from "../types/index.js";
+/* eslint-disable import/no-unresolved */
+import { VertexAIIntegration } from "../integrations/VertexAIIntegration";
+import { UserRepository } from "../repositories/UserRepository";
+import { User, AIStyleProfile, OnboardingStatus } from "../types";
 import {
   ServiceResult,
   createSuccessResult,
   handleServiceError,
-} from "../utils/errors.js";
+} from "../utils/errors";
 
 export class UserService {
   constructor(
@@ -42,7 +43,7 @@ export class UserService {
 
   async generateStyleProfile(
     firebaseUid: string,
-    questionnaireData: Record<string, any>
+    questionnaireData: Record<string, unknown>
   ): Promise<ServiceResult<AIStyleProfile>> {
     try {
       // Update onboarding status to generating
@@ -52,9 +53,8 @@ export class UserService {
       );
 
       // Generate AI style profile
-      const styleProfile = await this.vertexAIIntegration.generateStyleProfile(
-        questionnaireData
-      );
+      const styleProfile =
+        await this.vertexAIIntegration.generateStyleProfile(questionnaireData);
 
       // Store the profile and questionnaire data
       await this.userRepository.storeStyleProfile(firebaseUid, styleProfile);
@@ -86,8 +86,8 @@ export class UserService {
 
   async updateOnboardingProgress(
     firebaseUid: string,
-    status: string,
-    questionnaireData?: Record<string, any>
+    status: OnboardingStatus,
+    questionnaireData?: Record<string, unknown>
   ): Promise<ServiceResult<void>> {
     try {
       await this.userRepository.updateOnboardingStatus(firebaseUid, status);
