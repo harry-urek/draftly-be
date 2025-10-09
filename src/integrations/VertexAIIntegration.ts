@@ -1,11 +1,11 @@
 import { VertexAI, SchemaType } from "@google-cloud/vertexai";
 
-import config from "../config/index.js";
-import { AIStyleProfile, EmailGenerationContext } from "../types/index.js";
-import { ExternalServiceError } from "../utils/errors.js";
+import config from "../config";
+import { AIStyleProfile, EmailGenerationContext } from "../types";
+import { ExternalServiceError } from "../utils/errors";
 
 // Using a type alias instead of 'any'
-type GenerativeAIModel = ReturnType<VertexAI['getGenerativeModel']>;
+type GenerativeAIModel = ReturnType<VertexAI["getGenerativeModel"]>;
 
 export class VertexAIIntegration {
   private vertex_ai: VertexAI;

@@ -1,4 +1,4 @@
-import { ServiceResult } from "../types/index.js";
+import { ServiceResult } from "../types";
 
 export { ServiceResult };
 

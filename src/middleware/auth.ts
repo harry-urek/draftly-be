@@ -1,8 +1,9 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 
-import { firebaseIntegration } from "../integrations/FirebaseIntegration.js";
-import { prisma } from "../lib/prisma.js";
-import { slackNotifier } from "../lib/slack.js";
+import { firebaseIntegration } from "../integrations/FirebaseIntegration";
+import { prisma } from "../lib/prisma";
+import { slackNotifier } from "../lib/slack";
+import { setUserOnline } from "../lib/user";
 
 export interface AuthenticatedUser {
   userId: string;
@@ -61,6 +62,13 @@ export async function authMiddleware(
       userId: decodedToken.uid,
       email: decodedToken.email || userRecord.email || "",
     };
+
+    // Update presence so background sync can see online users
+    try {
+      await setUserOnline(decodedToken.uid);
+    } catch (e) {
+      request.log?.warn({ err: e }, "Failed to update user presence");
+    }
   } catch (error) {
     console.error("Auth middleware error:", (error as Error).message);
 
@@ -111,30 +119,15 @@ export async function requireGmailAuth(
       },
     });
 
-    if (
-      !userWithGmail ||
-      !userWithGmail.accessToken ||
-      !userWithGmail.refreshToken
-    ) {
+    // Require at least an access token. Refresh token is optional; Gmail API can still be accessed until expiry
+    if (!userWithGmail || !userWithGmail.accessToken) {
       return reply.status(403).send({
         error: "Gmail authentication required",
         requiresAuth: "gmail",
       });
     }
 
-    // Since we don't have a token expiry field in the schema,
-    // we'll use lastActive as a proxy for the token's freshness
-    // For a more robust solution, consider adding a tokenExpiry field to the User model
-    const lastActiveTime = userWithGmail.lastActive.getTime();
-
-    // If user hasn't been active in the last 6 hours, ask for token refresh
-    // This is a simplified check since we don't have actual token expiry tracking
-    if (Date.now() - lastActiveTime > 6 * 60 * 60 * 1000) {
-      return reply.status(403).send({
-        error: "Gmail token may be expired",
-        requiresAuth: "gmail",
-      });
-    }
+    // Don't block based on lastActive; Gmail API calls will surface expiry. Consider enhancing with explicit expiry tracking.
   } catch (error) {
     console.error("Gmail auth middleware error:", error);
     return reply

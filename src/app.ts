@@ -5,26 +5,26 @@ import swaggerUi from "@fastify/swagger-ui";
 import { PrismaClient } from "@prisma/client";
 import Fastify from "fastify";
 
-import config from "./config/index.js";
-import { backgroundService } from "./lib/background.js";
+import config from "./config/index";
+import { backgroundService } from "./lib/background";
 
 // Controllers
-import { AuthControllerImpl } from "./controllers/AuthController.js";
-import { EmailController } from "./controllers/EmailController.js";
-import { OnboardingController } from "./controllers/OnboardingController.js";
+import { AuthControllerImpl } from "./controllers/AuthController";
+import { EmailController } from "./controllers/EmailController";
+import { OnboardingController } from "./controllers/OnboardingController";
 
 // Integrations
-import { GmailIntegration } from "./integrations/GmailIntegration.js";
-import { VertexAIIntegration } from "./integrations/VertexAIIntegration.js";
+import { GmailIntegration } from "./integrations/GmailIntegration";
+import { VertexAIIntegration } from "./integrations/VertexAIIntegration";
 
 // Repositories
-import { EmailRepository } from "./repositories/EmailRepository.js";
-import { UserRepository } from "./repositories/UserRepository.js";
+import { EmailRepository } from "./repositories/EmailRepository";
+import { UserRepository } from "./repositories/UserRepository";
 
 // Services
-import { AuthService } from "./services/AuthService.js";
-import { EmailService } from "./services/EmailService.js";
-import { UserService } from "./services/UserService.js";
+import { AuthService } from "./services/AuthService";
+import { EmailService } from "./services/EmailService";
+import { UserService } from "./services/UserService";
 
 // Initialize Prisma
 const prisma = new PrismaClient();
@@ -134,6 +134,15 @@ export async function createApp() {
       environment: config.nodeEnv,
       timestamp: new Date().toISOString(),
     };
+  });
+
+  // Use DB-backed sync for background service so inbox uses stored threads
+  backgroundService.setSyncFunction(async (uid: string) => {
+    try {
+      await emailService.syncUserEmails(uid);
+    } catch (e) {
+      fastify.log.error({ err: e }, "Background sync failed");
+    }
   });
 
   // Register controller routes

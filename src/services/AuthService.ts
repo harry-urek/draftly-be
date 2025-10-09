@@ -1,11 +1,11 @@
-import { UserRepository } from "../repositories/UserRepository.js";
-import { GmailIntegration } from "../integrations/GmailIntegration.js";
-import { User, AuthTokens, FirebaseUser } from "../types/index.js";
+import { GmailIntegration } from "../integrations/GmailIntegration";
+import { UserRepository } from "../repositories/UserRepository";
+import { User, FirebaseUser } from "../types";
 import {
   ServiceResult,
   createSuccessResult,
   handleServiceError,
-} from "../utils/errors.js";
+} from "../utils/errors";
 
 export class AuthService {
   constructor(
@@ -48,11 +48,18 @@ export class AuthService {
       const tokens = await this.userRepository.getTokens(
         firebaseUser.firebaseUid
       );
-      const hasValidTokens = tokens?.accessToken && tokens?.refreshToken;
+      // Treat presence of an access token as potentially valid; refresh token is optional
+      const hasAccessToken = Boolean(tokens?.accessToken);
 
       let needsGmailAuth = true;
-      if (hasValidTokens) {
-        needsGmailAuth = !(await this.gmailIntegration.validateTokens(tokens));
+      if (hasAccessToken) {
+        // Validate by hitting Gmail API; if it works, we don't need Gmail auth
+        const safeTokens = {
+          accessToken: tokens?.accessToken,
+          refreshToken: tokens?.refreshToken,
+        };
+        needsGmailAuth =
+          !(await this.gmailIntegration.validateTokens(safeTokens));
       }
 
       // Check onboarding status
@@ -85,11 +92,17 @@ export class AuthService {
 
       // Check Gmail tokens
       const tokens = await this.userRepository.getTokens(firebaseUid);
-      const hasValidTokens = tokens?.accessToken && tokens?.refreshToken;
+      // Access token alone is acceptable; validate when present
+      const hasAccessToken = Boolean(tokens?.accessToken);
 
       let hasValidGmailAuth = false;
-      if (hasValidTokens) {
-        hasValidGmailAuth = await this.gmailIntegration.validateTokens(tokens);
+      if (hasAccessToken) {
+        const safeTokens = {
+          accessToken: tokens?.accessToken,
+          refreshToken: tokens?.refreshToken,
+        };
+        hasValidGmailAuth =
+          await this.gmailIntegration.validateTokens(safeTokens);
       }
 
       const needsOnboarding =
@@ -136,6 +149,8 @@ export class AuthService {
   async logout(firebaseUid: string): Promise<ServiceResult<void>> {
     try {
       await this.userRepository.setOffline(firebaseUid);
+      await this.userRepository.clearTokens(firebaseUid);
+      await this.userRepository.purgeUserData(firebaseUid);
       return createSuccessResult(undefined);
     } catch (error) {
       return handleServiceError(error);

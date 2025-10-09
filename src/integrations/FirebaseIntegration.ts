@@ -2,7 +2,7 @@ import admin from "firebase-admin";
 import { Auth as AdminAuth } from "firebase-admin/auth";
 import { initializeApp } from "firebase/app";
 import { Auth, getAuth } from "firebase/auth";
-import config from "../config/index.js";
+import config from "../config/index";
 
 /**
  * Firebase integration handling both admin and client SDK initialization
@@ -46,7 +46,8 @@ export class FirebaseIntegration {
         client_id: process.env.FIREBASE_CLIENT_ID || "",
         auth_uri: "https://accounts.google.com/o/oauth2/auth",
         token_uri: "https://oauth2.googleapis.com/token",
-        auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+        auth_provider_x509_cert_url:
+          "https://www.googleapis.com/oauth2/v1/certs",
         client_x509_cert_url: `https://www.googleapis.com/robot/v1/metadata/x509/${config.firebaseClientEmail.replace(
           "@",
           "%40"
@@ -54,15 +55,19 @@ export class FirebaseIntegration {
       };
 
       admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount as admin.ServiceAccount),
+        credential: admin.credential.cert(
+          serviceAccount as admin.ServiceAccount
+        ),
         projectId: config.firebaseProjectId,
       });
-      
+
       this.isAdminInitialized = true;
       console.log("✅ Firebase Admin SDK initialized successfully");
     } catch (error) {
       console.error("❌ Firebase Admin SDK initialization failed:", error);
-      throw new Error(`Firebase Admin SDK initialization failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Firebase Admin SDK initialization failed: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
@@ -92,12 +97,14 @@ export class FirebaseIntegration {
       // Initialize Firebase Client SDK
       const app = initializeApp(firebaseConfig);
       this.clientAuth = getAuth(app);
-      
+
       this.isClientInitialized = true;
       console.log("✅ Firebase Client SDK initialized successfully");
     } catch (error) {
       console.error("❌ Firebase Client SDK initialization failed:", error);
-      throw new Error(`Firebase Client SDK initialization failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Firebase Client SDK initialization failed: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
@@ -124,7 +131,9 @@ export class FirebaseIntegration {
   /**
    * Verify Firebase ID token using Admin SDK
    */
-  public async verifyIdToken(idToken: string): Promise<admin.auth.DecodedIdToken> {
+  public async verifyIdToken(
+    idToken: string
+  ): Promise<admin.auth.DecodedIdToken> {
     try {
       const decodedToken = await this.getAdminAuth().verifyIdToken(idToken);
       return decodedToken;

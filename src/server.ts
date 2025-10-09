@@ -1,5 +1,5 @@
-import { createApp, backgroundService } from "./app.js";
-import config from "./config/index.js";
+import { createApp, backgroundService } from "./app";
+import config from "./config/index";
 
 async function startServer() {
   try {

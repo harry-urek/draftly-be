@@ -1,8 +1,8 @@
 import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
-import config from "../config/index.js";
-import { AuthTokens, GmailMessage } from "../types/index.js";
-import { ExternalServiceError } from "../utils/errors.js";
+import config from "../config/index";
+import { AuthTokens, GmailMessage } from "../types";
+import { ExternalServiceError } from "../utils/errors";
 
 export class GmailIntegration {
   private oauth2Client: OAuth2Client;
@@ -23,7 +23,9 @@ export class GmailIntegration {
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/userinfo.profile",
       ],
-      prompt: "consent",
+      include_granted_scopes: true,
+      // Avoid forcing consent every time; Google will reuse prior approval
+      // prompt: "consent", // removed to prevent repeated permission prompts
     });
   }
 
@@ -44,23 +46,31 @@ export class GmailIntegration {
 
   async validateTokens(tokens: AuthTokens): Promise<boolean> {
     try {
-      if (!tokens.accessToken) return false;
-
+      // Accept either access token or refresh token; refresh if needed
       this.oauth2Client.setCredentials({
         access_token: tokens.accessToken,
         refresh_token: tokens.refreshToken,
       });
 
+      // If we only have a refresh token, attempt to get a fresh access token
+      if (!tokens.accessToken && tokens.refreshToken) {
+        const at = await this.oauth2Client.getAccessToken();
+        if (!at || !at.token) {
+          return false;
+        }
+      }
+
       const gmail = google.gmail({ version: "v1", auth: this.oauth2Client });
       await gmail.users.getProfile({ userId: "me" });
       return true;
-    } catch (error: any) {
-      if (error.code === 401 || error.code === 403) {
+    } catch (error: unknown) {
+      const code = (error as { code?: number })?.code;
+      if (code === 401 || code === 403) {
         return false;
       }
       throw new ExternalServiceError(
         "Gmail",
-        `Token validation failed: ${error.message}`
+        `Token validation failed: ${(error as Error)?.message || String(error)}`
       );
     }
   }
@@ -146,8 +156,7 @@ export class GmailIntegration {
       const getHeader = (name: string) =>
         headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())
           ?.value || "";
-
-      const body = this.extractBody(data.payload);
+      const { html, text } = this.extractBodies(data.payload);
 
       return {
         id: data.id,
@@ -157,7 +166,8 @@ export class GmailIntegration {
         to: getHeader("To"),
         date: getHeader("Date"),
         snippet: data.snippet || "",
-        body,
+        body: text || html || data.snippet || "",
+        htmlBody: html,
         isUnread: data.labelIds?.includes("UNREAD") || false,
       };
     } catch (error) {
@@ -166,41 +176,39 @@ export class GmailIntegration {
     }
   }
 
-  private extractBody(payload: any): string {
-    let body = "";
+  private extractBodies(payload: any): { html?: string; text?: string } {
+    let html: string | undefined = undefined;
+    let text: string | undefined = undefined;
 
-    if (payload.body?.data) {
-      body = Buffer.from(payload.body.data, "base64").toString("utf-8");
-      return body;
+    const decode = (b64: string) =>
+      Buffer.from(b64, "base64").toString("utf-8");
+
+    if (payload?.body?.data) {
+      // Single-part message
+      const mime = payload.mimeType || "text/plain";
+      if (mime.includes("html")) html = decode(payload.body.data);
+      else text = decode(payload.body.data);
+      return { html, text };
     }
 
-    if (payload.parts) {
-      const htmlPart = payload.parts.find(
-        (part: any) => part.mimeType === "text/html"
-      );
-      const textPart = payload.parts.find(
-        (part: any) => part.mimeType === "text/plain"
-      );
-      const preferredPart = htmlPart || textPart;
-
-      if (preferredPart?.body?.data) {
-        body = Buffer.from(preferredPart.body.data, "base64").toString("utf-8");
-        return body;
+    const visit = (part: any) => {
+      if (!part) return;
+      if (part.mimeType?.includes("text/html") && part.body?.data && !html) {
+        html = decode(part.body.data);
       }
-
-      // Recursive search in nested parts
-      for (const part of payload.parts) {
-        if (part.parts) {
-          const nestedBody = this.extractBody(part);
-          if (nestedBody) {
-            body = nestedBody;
-            break;
-          }
-        }
+      if (part.mimeType?.includes("text/plain") && part.body?.data && !text) {
+        text = decode(part.body.data);
       }
+      if (part.parts) {
+        for (const p of part.parts) visit(p);
+      }
+    };
+
+    if (payload?.parts) {
+      for (const p of payload.parts) visit(p);
     }
 
-    return body;
+    return { html, text };
   }
 
   getRefreshedTokens(): AuthTokens | null {

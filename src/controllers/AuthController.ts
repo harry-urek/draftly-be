@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { AuthService } from "../services/AuthService.js";
-import { requireAuth } from "../middleware/auth.js";
-import config from "../config/index.js";
+import { AuthService } from "../services/AuthService";
+import { requireAuth } from "../middleware/auth";
+import config from "../config/index";
 
 interface AuthController {
   registerRoutes(fastify: FastifyInstance): void;

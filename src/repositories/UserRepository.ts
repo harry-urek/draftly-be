@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
-import { User, AuthTokens } from "../types/index.js";
-import { tryEncrypt, tryDecrypt } from "../utils/encryption.js";
+import { User, AuthTokens } from "../types";
+import { tryEncrypt, tryDecrypt } from "../utils/encryption";
 
 export class UserRepository {
   constructor(private prisma: PrismaClient) {}
@@ -72,8 +72,30 @@ export class UserRepository {
     });
   }
 
+  async clearTokens(firebaseUid: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { firebaseUid },
+      data: {
+        accessToken: null,
+        refreshToken: null,
+      },
+    });
+  }
+
+  async purgeUserData(firebaseUid: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { firebaseUid },
+      select: { id: true },
+    });
+    if (!user) return;
+    const userId = user.id;
+    await this.prisma.draft.deleteMany({ where: { userId } });
+    await this.prisma.email.deleteMany({ where: { userId } });
+    await this.prisma.thread.deleteMany({ where: { userId } });
+  }
+
   async storeTokens(firebaseUid: string, tokens: AuthTokens): Promise<void> {
-    const updateData: Record<string, string | undefined> = {};
+    const updateData: Record<string, string | Date | boolean | undefined> = {};
 
     if (tokens.accessToken) {
       updateData.accessToken = tryEncrypt(tokens.accessToken);
@@ -82,6 +104,10 @@ export class UserRepository {
     if (tokens.refreshToken) {
       updateData.refreshToken = tryEncrypt(tokens.refreshToken);
     }
+
+    // Refresh lastActive and mark user online when we store tokens
+    updateData.lastActive = new Date();
+    updateData.isOnline = true;
 
     if (Object.keys(updateData).length > 0) {
       await this.prisma.user.update({
