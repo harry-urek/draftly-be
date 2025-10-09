@@ -1,7 +1,9 @@
-import admin from "firebase-admin";
-import { Auth as AdminAuth } from "firebase-admin/auth";
+/* eslint-disable import/no-unresolved */
 import { initializeApp } from "firebase/app";
 import { Auth, getAuth } from "firebase/auth";
+import admin from "firebase-admin";
+import { Auth as AdminAuth } from "firebase-admin/auth";
+
 import config from "../config/index";
 
 /**

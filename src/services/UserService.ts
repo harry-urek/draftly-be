@@ -1,6 +1,7 @@
-import { UserRepository } from "../repositories/UserRepository";
+/* eslint-disable import/no-unresolved */
 import { VertexAIIntegration } from "../integrations/VertexAIIntegration";
-import { User, AIStyleProfile } from "../types";
+import { UserRepository } from "../repositories/UserRepository";
+import { User, AIStyleProfile, OnboardingStatus } from "../types";
 import {
   ServiceResult,
   createSuccessResult,
@@ -42,7 +43,7 @@ export class UserService {
 
   async generateStyleProfile(
     firebaseUid: string,
-    questionnaireData: Record<string, any>
+    questionnaireData: Record<string, unknown>
   ): Promise<ServiceResult<AIStyleProfile>> {
     try {
       // Update onboarding status to generating
@@ -85,8 +86,8 @@ export class UserService {
 
   async updateOnboardingProgress(
     firebaseUid: string,
-    status: string,
-    questionnaireData?: Record<string, any>
+    status: OnboardingStatus,
+    questionnaireData?: Record<string, unknown>
   ): Promise<ServiceResult<void>> {
     try {
       await this.userRepository.updateOnboardingStatus(firebaseUid, status);

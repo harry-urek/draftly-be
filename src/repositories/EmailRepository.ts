@@ -1,5 +1,6 @@
 import {
   PrismaClient,
+  Prisma,
   Email as EmailModel,
   Thread as ThreadModel,
   Draft as DraftModel,
@@ -10,6 +11,28 @@ import { EmailMessage, EmailThread, EmailDraft } from "../types/index.js";
 
 type ThreadWithEmails = ThreadModel & { emails: EmailModel[] };
 type ThreadPreview = ThreadModel & { emails: EmailModel[] };
+
+type TransactionClient = PrismaClient | Prisma.TransactionClient;
+
+export type EmailUpsertInput = Omit<EmailMessage, "id"> & {
+  userId: string;
+  threadId: string;
+  gmailId: string;
+};
+
+export type EmailUpsertResult = {
+  gmailId: string;
+  success: boolean;
+  created: boolean;
+  email?: EmailMessage;
+  error?: string;
+};
+
+export type EmailBatchUpsertResult = {
+  results: EmailUpsertResult[];
+  createdCount: number;
+  errors: Array<{ gmailId: string; error: string }>;
+};
 
 export class EmailRepository {
   constructor(private prisma: PrismaClient) {}
@@ -122,54 +145,37 @@ export class EmailRepository {
     return this.mapToEmailMessage(record);
   }
 
-  async upsertEmail(
-    emailData: Omit<EmailMessage, "id"> & {
-      userId: string;
-      threadId: string;
-      gmailId: string;
-    }
-  ): Promise<{ email: EmailMessage; created: boolean }> {
-    const existing = await this.prisma.email.findUnique({
-      where: { gmailId: emailData.gmailId },
-    });
+  async upsertEmail(emailData: EmailUpsertInput): Promise<EmailUpsertResult> {
+    return this.upsertEmailInternal(this.prisma, emailData);
+  }
 
-    let record: EmailModel;
-    let created = false;
-
-    if (existing) {
-      record = await this.prisma.email.update({
-        where: { gmailId: emailData.gmailId },
-        data: {
-          threadId: emailData.threadId,
-          userId: emailData.userId,
-          from: emailData.from,
-          to: emailData.to,
-          subject: emailData.subject,
-          body: emailData.body,
-          htmlBody: emailData.htmlBody,
-          timestamp: emailData.timestamp,
-          isUnread: emailData.isUnread,
-        },
-      });
-    } else {
-      record = await this.prisma.email.create({
-        data: {
-          gmailId: emailData.gmailId,
-          threadId: emailData.threadId,
-          userId: emailData.userId,
-          from: emailData.from,
-          to: emailData.to,
-          subject: emailData.subject,
-          body: emailData.body,
-          htmlBody: emailData.htmlBody,
-          timestamp: emailData.timestamp,
-          isUnread: emailData.isUnread,
-        },
-      });
-      created = true;
+  async upsertEmailsBatch(
+    emails: EmailUpsertInput[]
+  ): Promise<EmailBatchUpsertResult> {
+    if (emails.length === 0) {
+      return { results: [], createdCount: 0, errors: [] };
     }
 
-    return { email: this.mapToEmailMessage(record), created };
+    const results = await this.prisma.$transaction((tx) =>
+      Promise.all(emails.map((email) => this.upsertEmailInternal(tx, email)))
+    );
+
+    const errors = results
+      .filter((result) => !result.success)
+      .map((result) => ({
+        gmailId: result.gmailId,
+        error: result.error ?? "Unknown upsert error",
+      }));
+
+    const createdCount = results.filter(
+      (result) => result.success && result.created
+    ).length;
+
+    return {
+      results,
+      createdCount,
+      errors,
+    };
   }
 
   async markAsRead(emailId: string): Promise<void> {
@@ -217,6 +223,72 @@ export class EmailRepository {
     });
 
     return drafts.map((draft: DraftModel) => this.mapToEmailDraft(draft));
+  }
+
+  private async upsertEmailInternal(
+    client: TransactionClient,
+    emailData: EmailUpsertInput
+  ): Promise<EmailUpsertResult> {
+    try {
+      const existing = await client.email.findFirst({
+        where: {
+          gmailId: emailData.gmailId,
+          userId: emailData.userId,
+        },
+      });
+
+      let record: EmailModel;
+      let created = false;
+
+      if (existing) {
+        record = await client.email.update({
+          where: { id: existing.id },
+          data: {
+            threadId: emailData.threadId,
+            userId: emailData.userId,
+            from: emailData.from,
+            to: emailData.to,
+            subject: emailData.subject,
+            body: emailData.body,
+            htmlBody: emailData.htmlBody,
+            timestamp: emailData.timestamp,
+            isUnread: emailData.isUnread,
+          },
+        });
+      } else {
+        record = await client.email.create({
+          data: {
+            gmailId: emailData.gmailId,
+            threadId: emailData.threadId,
+            userId: emailData.userId,
+            from: emailData.from,
+            to: emailData.to,
+            subject: emailData.subject,
+            body: emailData.body,
+            htmlBody: emailData.htmlBody,
+            timestamp: emailData.timestamp,
+            isUnread: emailData.isUnread,
+          },
+        });
+        created = true;
+      }
+
+      return {
+        gmailId: emailData.gmailId,
+        success: true,
+        created,
+        email: this.mapToEmailMessage(record),
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown upsert error";
+      return {
+        gmailId: emailData.gmailId,
+        success: false,
+        created: false,
+        error: message,
+      };
+    }
   }
 
   private mapToEmailMessage(record: EmailModel): EmailMessage {

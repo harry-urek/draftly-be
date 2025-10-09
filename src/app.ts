@@ -4,7 +4,7 @@ import jwt from "@fastify/jwt";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { PrismaClient } from "@prisma/client";
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 
 import config from "./config/index";
 import { AuthControllerImpl } from "./controllers/AuthController";
@@ -44,6 +44,8 @@ const userService = new UserService(userRepository, vertexAIIntegration);
 const authController = new AuthControllerImpl(authService);
 const emailController = new EmailController(emailService);
 const onboardingController = new OnboardingController();
+
+let fastifyInstance: FastifyInstance | null = null;
 
 export async function createApp() {
   const fastify = Fastify({
@@ -138,6 +140,8 @@ export async function createApp() {
     }
   });
 
+  fastifyInstance = fastify;
+
   // Register controller routes
   authController.registerRoutes(fastify);
 
@@ -223,16 +227,27 @@ export async function createApp() {
 // Graceful shutdown
 async function gracefulShutdown() {
   try {
-    // Stop background service before disconnecting
     backgroundService.stop();
-    // Use logger instead of console.log
-    process.stdout.write("✅ Background service stopped\n");
+    if (fastifyInstance) {
+      fastifyInstance.log.info("✅ Background service stopped");
+    } else {
+      console.warn("✅ Background service stopped");
+    }
 
     await prisma.$disconnect();
-    process.stdout.write("✅ Database connection closed\n");
+    if (fastifyInstance) {
+      fastifyInstance.log.info("✅ Database connection closed");
+    } else {
+      console.warn("✅ Database connection closed");
+    }
+
     process.exit(0);
   } catch (error) {
-    process.stderr.write(`❌ Error during shutdown: ${error}\n`);
+    if (fastifyInstance) {
+      fastifyInstance.log.error({ err: error }, "❌ Error during shutdown");
+    } else {
+      console.error("❌ Error during shutdown:", error);
+    }
     process.exit(1);
   }
 }

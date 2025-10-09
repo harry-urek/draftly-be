@@ -65,6 +65,27 @@ export class CacheManager {
     }
   }
 
+  private static async scanKeys(pattern: string, count: number = 1000) {
+    const keys: string[] = [];
+    let cursor = "0";
+
+    do {
+      const [nextCursor, batch] = await redis.scan(
+        cursor,
+        "MATCH",
+        pattern,
+        "COUNT",
+        count
+      );
+      if (batch.length) {
+        keys.push(...batch);
+      }
+      cursor = nextCursor;
+    } while (cursor !== "0");
+
+    return keys;
+  }
+
   static async getThreads(userId: string): Promise<EmailThread[] | null> {
     const key = CACHE_KEYS.USER_THREADS(userId);
     const cached = await redis.get(key);
@@ -181,7 +202,7 @@ export class CacheManager {
     ];
 
     const detailPattern = `${CACHE_KEYS.USER_THREAD_DETAIL_PREFIX(userId)}*`;
-    const detailKeys = await redis.keys(detailPattern);
+    const detailKeys = await this.scanKeys(detailPattern);
 
     const keysToDelete = [...baseKeys, ...detailKeys];
     if (keysToDelete.length > 0) {
@@ -208,7 +229,7 @@ export class CacheManager {
   // Cleanup offline users (run periodically)
   static async cleanupOfflineUsers() {
     const pattern = CACHE_KEYS.USER_PRESENCE("*");
-    const keys = await redis.keys(pattern);
+    const keys = await this.scanKeys(pattern);
 
     for (const key of keys) {
       const userId = key.split(":")[1];

@@ -1,3 +1,4 @@
+/* eslint-disable import/no-unresolved */
 import { FastifyRequest, FastifyReply } from "fastify";
 
 import { firebaseIntegration } from "../integrations/FirebaseIntegration";

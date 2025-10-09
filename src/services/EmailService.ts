@@ -1,19 +1,31 @@
 /* eslint-disable import/no-unresolved */
 import { GmailIntegration } from "../integrations/GmailIntegration";
 import { VertexAIIntegration } from "../integrations/VertexAIIntegration";
-import { EmailRepository } from "../repositories/EmailRepository";
+import {
+  EmailBatchUpsertResult,
+  EmailRepository,
+  EmailUpsertInput,
+} from "../repositories/EmailRepository";
 import { UserRepository } from "../repositories/UserRepository";
 import {
   EmailThread,
   EmailDraft,
   EmailGenerationContext,
   AIStyleProfile,
+  User,
+  AuthTokens,
 } from "../types";
 import {
   ServiceResult,
+  createErrorResult,
   createSuccessResult,
   handleServiceError,
 } from "../utils/errors";
+
+type ThreadPayload = {
+  thread: EmailThread;
+  upsertErrors?: Array<{ gmailId: string; error: string }>;
+};
 
 export class EmailService {
   constructor(
@@ -27,93 +39,109 @@ export class EmailService {
     firebaseUid: string,
     limit: number = 25
   ): Promise<ServiceResult<EmailThread[]>> {
-    try {
-      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
-      if (!user) {
-        return { success: false, error: "User not found" };
+    return this.executeWithUser<EmailThread[]>(
+      firebaseUid,
+      async ({ user }: { user: User }) => {
+        const threads = await this.emailRepository.findThreadsByUserId(
+          user.id,
+          limit
+        );
+        return createSuccessResult(threads);
       }
-
-      const threads = await this.emailRepository.findThreadsByUserId(
-        user.id,
-        limit
-      );
-      return createSuccessResult(threads);
-    } catch (error) {
-      return handleServiceError(error);
-    }
+    );
   }
 
   async getThread(
     firebaseUid: string,
     threadId: string
-  ): Promise<ServiceResult<EmailThread>> {
-    try {
-      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
-      if (!user) {
-        return { success: false, error: "User not found" };
-      }
-
-      const thread = await this.emailRepository.findThreadById(threadId);
-      if (!thread || thread.id !== threadId) {
-        return { success: false, error: "Thread not found" };
-      }
-
-      if (!thread.gmailId) {
-        return createSuccessResult(thread);
-      }
-
-      const tokens = await this.userRepository.getTokens(firebaseUid);
-      if (!tokens?.accessToken && !tokens?.refreshToken) {
-        return { success: false, error: "Gmail tokens not found" };
-      }
-
-      const threadMessages = await this.gmailIntegration.getThreadMessages(
-        tokens,
-        thread.gmailId
-      );
-
-      const threadCache = new Map<string, EmailThread>();
-      threadCache.set(thread.gmailId, thread);
-
-      for (const message of threadMessages) {
-        if (!message.id || !message.threadId) continue;
-        const gmailThreadId = message.threadId;
-
-        let mappedThread = threadCache.get(gmailThreadId);
-        if (!mappedThread) {
-          mappedThread = await this.emailRepository.ensureThread(
-            user.id,
-            gmailThreadId,
-            message.subject
-          );
-          threadCache.set(gmailThreadId, mappedThread);
+  ): Promise<ServiceResult<ThreadPayload>> {
+    return this.executeWithUser<ThreadPayload>(
+      firebaseUid,
+      async ({ user }: { user: User }) => {
+        const thread = await this.emailRepository.findThreadById(threadId);
+        if (!thread || thread.id !== threadId) {
+          return createErrorResult<ThreadPayload>("Thread not found");
         }
 
-        const subject =
-          message.subject || mappedThread.subject || thread.subject || "";
-        await this.emailRepository.upsertEmail({
-          gmailId: message.id,
-          threadId: mappedThread.id,
-          userId: user.id,
-          from: message.from,
-          to: message.to,
-          subject,
-          body: message.body || message.snippet,
-          htmlBody: message.htmlBody,
-          timestamp: this.parseDate(message.date),
-          isUnread: message.isUnread,
-        });
-      }
+        if (!thread.gmailId) {
+          return createSuccessResult({ thread });
+        }
 
-      const refreshed = await this.emailRepository.findThreadById(threadId);
-      if (!refreshed) {
-        return { success: false, error: "Thread not found" };
-      }
+        const tokens = await this.getValidTokens(firebaseUid, "any");
+        if (!tokens) {
+          return createErrorResult<ThreadPayload>("Gmail tokens not found");
+        }
 
-      return createSuccessResult(refreshed);
-    } catch (error: unknown) {
-      return handleServiceError<EmailThread>(error);
-    }
+        const threadMessages = await this.gmailIntegration.getThreadMessages(
+          tokens,
+          thread.gmailId
+        );
+
+        const threadCache = new Map<string, EmailThread>();
+        threadCache.set(thread.gmailId, thread);
+
+        const emailPayloads: EmailUpsertInput[] = [];
+
+        for (const message of threadMessages) {
+          if (!message.id || !message.threadId) continue;
+
+          let mappedThread = threadCache.get(message.threadId);
+          if (!mappedThread) {
+            mappedThread = await this.emailRepository.ensureThread(
+              user.id,
+              message.threadId,
+              message.subject
+            );
+            threadCache.set(message.threadId, mappedThread);
+          }
+
+          const subject =
+            message.subject || mappedThread.subject || thread.subject || "";
+
+          emailPayloads.push({
+            gmailId: message.id,
+            threadId: mappedThread.id,
+            userId: user.id,
+            from: message.from,
+            to: message.to,
+            subject,
+            body: message.body || message.snippet,
+            htmlBody: message.htmlBody,
+            timestamp: this.parseDate(message.date),
+            isUnread: message.isUnread,
+          });
+        }
+
+        let upsertReport: EmailBatchUpsertResult = {
+          results: [],
+          createdCount: 0,
+          errors: [],
+        };
+
+        if (emailPayloads.length > 0) {
+          upsertReport =
+            await this.emailRepository.upsertEmailsBatch(emailPayloads);
+        }
+
+        const refreshed = await this.emailRepository.findThreadById(threadId);
+        if (!refreshed) {
+          return createErrorResult<ThreadPayload>("Thread not found");
+        }
+
+        if (upsertReport.errors.length > 0) {
+          return {
+            success: false,
+            error: "Some emails failed to upsert",
+            data: {
+              thread: refreshed,
+              upsertErrors: upsertReport.errors,
+            },
+          };
+        }
+
+        return createSuccessResult({ thread: refreshed });
+      }
+    );
   }
 
   async syncUserEmails(firebaseUid: string): Promise<
@@ -123,44 +151,36 @@ export class EmailService {
       errorDetails: Array<{ messageId: string; error: string }>;
     }>
   > {
-    try {
-      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
-      if (!user) {
-        return { success: false, error: "User not found" };
-      }
+    return this.executeWithUserAndTokens<{
+      synced: number;
+      errors: number;
+      errorDetails: Array<{ messageId: string; error: string }>;
+    }>(
+      firebaseUid,
+      "access",
+      async ({ user, tokens }: { user: User; tokens: AuthTokens }) => {
+        const messages = await this.gmailIntegration.getMessages(tokens);
+        const threadCache = new Map<string, EmailThread>();
+        const emailPayloads: EmailUpsertInput[] = [];
 
-      const tokens = await this.userRepository.getTokens(firebaseUid);
-      if (!tokens?.accessToken) {
-        return { success: false, error: "Gmail tokens not found" };
-      }
+        for (const message of messages) {
+          if (!message.threadId || !message.id) {
+            continue;
+          }
 
-      const messages = await this.gmailIntegration.getMessages(tokens);
-      let syncedCount = 0;
-      const errorDetails: Array<{ messageId: string; error: string }> = [];
+          let thread = threadCache.get(message.threadId);
+          if (!thread) {
+            thread = await this.emailRepository.ensureThread(
+              user.id,
+              message.threadId,
+              message.subject
+            );
+            threadCache.set(message.threadId, thread);
+          }
 
-      const threadCache = new Map<string, EmailThread>();
+          const subject = message.subject || thread.subject || "";
 
-      for (const message of messages) {
-        if (!message.threadId || !message.id) {
-          continue;
-        }
-
-        // Create or find thread
-        let thread = threadCache.get(message.threadId);
-        if (!thread) {
-          thread = await this.emailRepository.ensureThread(
-            user.id,
-            message.threadId,
-            message.subject
-          );
-          threadCache.set(message.threadId, thread);
-        }
-
-        const subject = message.subject || thread.subject || "";
-
-        // Create email if not exists
-        try {
-          const result = await this.emailRepository.upsertEmail({
+          emailPayloads.push({
             gmailId: message.id,
             threadId: thread.id,
             userId: user.id,
@@ -172,35 +192,23 @@ export class EmailService {
             timestamp: this.parseDate(message.date),
             isUnread: message.isUnread,
           });
-          if (result.created) {
-            syncedCount++;
-          }
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : "Unknown error";
-          // Skip if email already exists (unique constraint violations)
-          if (!errorMessage.includes("Unique constraint")) {
-            console.error("Error syncing email:", error);
-            errorDetails.push({
-              messageId: message.id,
-              error: errorMessage,
-            });
-          }
         }
-      }
 
-      return createSuccessResult({
-        synced: syncedCount,
-        errors: errorDetails.length,
-        errorDetails,
-      });
-    } catch (error: unknown) {
-      return handleServiceError<{
-        synced: number;
-        errors: number;
-        errorDetails: Array<{ messageId: string; error: string }>;
-      }>(error);
-    }
+        const upsertReport =
+          await this.emailRepository.upsertEmailsBatch(emailPayloads);
+
+        const errorDetails = upsertReport.errors.map((error) => ({
+          messageId: error.gmailId,
+          error: error.error,
+        }));
+
+        return createSuccessResult({
+          synced: upsertReport.createdCount,
+          errors: errorDetails.length,
+          errorDetails,
+        });
+      }
+    );
   }
 
   async generateDraft(
@@ -208,181 +216,155 @@ export class EmailService {
     threadId: string,
     context: Partial<EmailGenerationContext>
   ): Promise<ServiceResult<EmailDraft>> {
-    try {
-      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
-      if (!user) {
-        return { success: false, error: "User not found" };
-      }
+    return this.executeWithUser<EmailDraft>(
+      firebaseUid,
+      async ({ user }: { user: User }) => {
+        const styleProfile =
+          await this.userRepository.getStyleProfile(firebaseUid);
+        if (!styleProfile) {
+          return createErrorResult<EmailDraft>(
+            "User style profile not found. Complete onboarding first."
+          );
+        }
 
-      // Get user's style profile
-      const styleProfile =
-        await this.userRepository.getStyleProfile(firebaseUid);
-      if (!styleProfile) {
-        return {
-          success: false,
-          error: "User style profile not found. Complete onboarding first.",
+        const thread = await this.emailRepository.findThreadById(threadId);
+        if (!thread) {
+          return createErrorResult<EmailDraft>("Email thread not found");
+        }
+
+        const generationContext: EmailGenerationContext = {
+          originalEmail:
+            context.originalEmail ||
+            thread.messages[thread.messages.length - 1]?.body ||
+            "",
+          threadHistory:
+            context.threadHistory || thread.messages.map((m) => m.body),
+          tone: context.tone,
+          recipient: context.recipient,
         };
+
+        const draftContent = await this.vertexAIIntegration.generateEmailDraft(
+          styleProfile as AIStyleProfile,
+          generationContext
+        );
+
+        const draft = await this.emailRepository.createDraft({
+          threadId,
+          userId: user.id,
+          content: draftContent,
+          tone: context.tone,
+          status: "PENDING",
+        });
+
+        return createSuccessResult(draft);
       }
-
-      // Get thread details for context
-      const thread = await this.emailRepository.findThreadById(threadId);
-      if (!thread) {
-        return { success: false, error: "Email thread not found" };
-      }
-
-      // Build email generation context
-      const generationContext: EmailGenerationContext = {
-        originalEmail:
-          context.originalEmail ||
-          thread.messages[thread.messages.length - 1]?.body ||
-          "",
-        threadHistory:
-          context.threadHistory || thread.messages.map((m) => m.body),
-        tone: context.tone,
-        recipient: context.recipient,
-      };
-
-      // Generate draft using AI
-      const draftContent = await this.vertexAIIntegration.generateEmailDraft(
-        styleProfile as AIStyleProfile,
-        generationContext
-      );
-
-      // Save draft to database
-      const draft = await this.emailRepository.createDraft({
-        threadId,
-        userId: user.id,
-        content: draftContent,
-        tone: context.tone,
-        status: "PENDING",
-      });
-
-      return createSuccessResult(draft);
-    } catch (error) {
-      return handleServiceError(error);
-    }
+    );
   }
 
   async sendDraft(
     firebaseUid: string,
     draftId: string
   ): Promise<ServiceResult<string>> {
-    try {
-      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
-      if (!user) {
-        return { success: false, error: "User not found" };
+    return this.executeWithUserAndTokens<string>(
+      firebaseUid,
+      "access",
+      async ({ tokens }: { user: User; tokens: AuthTokens }) => {
+        void tokens;
+        await this.emailRepository.updateDraftStatus(draftId, "SENT");
+        return createSuccessResult("Draft sent successfully");
       }
-
-      // Get tokens for Gmail API
-      const tokens = await this.userRepository.getTokens(firebaseUid);
-      if (!tokens?.accessToken) {
-        return { success: false, error: "Gmail tokens not found" };
-      }
-
-      // Get draft details (implementation would need to be added to repository)
-      // For now, return a placeholder
-      await this.emailRepository.updateDraftStatus(draftId, "SENT");
-
-      return createSuccessResult("Draft sent successfully");
-    } catch (error: unknown) {
-      return handleServiceError<string>(error);
-    }
+    );
   }
 
   async getDrafts(firebaseUid: string): Promise<ServiceResult<EmailDraft[]>> {
-    try {
-      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
-      if (!user) {
-        return { success: false, error: "User not found" };
+    return this.executeWithUser<EmailDraft[]>(
+      firebaseUid,
+      async ({ user }: { user: User }) => {
+        const drafts = await this.emailRepository.findDraftsByUserId(user.id);
+        return createSuccessResult(drafts);
       }
-
-      const drafts = await this.emailRepository.findDraftsByUserId(user.id);
-      return createSuccessResult(drafts);
-    } catch (error: unknown) {
-      return handleServiceError<EmailDraft[]>(error);
-    }
+    );
   }
 
   async replyToThread(
     firebaseUid: string,
     threadId: string,
     body: string
-  ): Promise<ServiceResult<EmailThread>> {
-    try {
-      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
-      if (!user) {
-        return { success: false, error: "User not found" };
+  ): Promise<ServiceResult<ThreadPayload>> {
+    return this.executeWithUserAndTokens<ThreadPayload>(
+      firebaseUid,
+      "any",
+      async ({ tokens }: { user: User; tokens: AuthTokens }) => {
+        const thread = await this.emailRepository.findThreadById(threadId);
+        if (!thread) {
+          return createErrorResult<ThreadPayload>("Thread not found");
+        }
+
+        if (!thread.gmailId) {
+          return createErrorResult<ThreadPayload>(
+            "Thread is missing Gmail metadata"
+          );
+        }
+
+        const threadMessages = await this.gmailIntegration.getThreadMessages(
+          tokens,
+          thread.gmailId
+        );
+
+        if (!threadMessages.length) {
+          return createErrorResult<ThreadPayload>(
+            "No messages found in thread"
+          );
+        }
+
+        const sortedMessages = [...threadMessages].sort(
+          (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+        );
+        const latest = sortedMessages[sortedMessages.length - 1];
+        if (!latest) {
+          return createErrorResult<ThreadPayload>(
+            "Unable to determine latest message"
+          );
+        }
+
+        const fromAddress =
+          latest.from ?? sortedMessages.find((msg) => msg.from)?.from;
+        if (!fromAddress) {
+          return createErrorResult<ThreadPayload>(
+            "Unable to determine recipient"
+          );
+        }
+
+        const recipient = this.extractEmailAddress(fromAddress);
+        const baseSubject = thread.subject || latest.subject || "";
+        const subject = baseSubject.startsWith("Re:")
+          ? baseSubject
+          : baseSubject
+            ? `Re: ${baseSubject}`
+            : "Re:";
+
+        const inReplyTo = latest.messageIdHeader;
+        const references = Array.from(
+          new Set(
+            [
+              ...(latest.references ? latest.references.split(/\s+/) : []),
+              latest.messageIdHeader,
+            ].filter(Boolean)
+          )
+        ) as string[];
+
+        await this.gmailIntegration.sendReply(tokens, {
+          threadId: thread.gmailId,
+          to: recipient,
+          subject,
+          body,
+          inReplyTo,
+          references,
+        });
+
+        return this.getThread(firebaseUid, threadId);
       }
-
-      const thread = await this.emailRepository.findThreadById(threadId);
-      if (!thread) {
-        return { success: false, error: "Thread not found" };
-      }
-
-      const tokens = await this.userRepository.getTokens(firebaseUid);
-      if (!tokens?.accessToken && !tokens?.refreshToken) {
-        return { success: false, error: "Gmail tokens not found" };
-      }
-
-      if (!thread.gmailId) {
-        return { success: false, error: "Thread is missing Gmail metadata" };
-      }
-
-      const threadMessages = await this.gmailIntegration.getThreadMessages(
-        tokens,
-        thread.gmailId
-      );
-
-      if (!threadMessages.length) {
-        return { success: false, error: "No messages found in thread" };
-      }
-
-      const sortedMessages = [...threadMessages].sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-      );
-      const latest = sortedMessages[sortedMessages.length - 1];
-      if (!latest) {
-        return { success: false, error: "Unable to determine latest message" };
-      }
-
-      const fromAddress =
-        latest.from ?? sortedMessages.find((msg) => msg.from)?.from;
-      if (!fromAddress) {
-        return { success: false, error: "Unable to determine recipient" };
-      }
-
-      const recipient = this.extractEmailAddress(fromAddress);
-      const baseSubject = thread.subject || latest.subject || "";
-      const subject = baseSubject.startsWith("Re:")
-        ? baseSubject
-        : baseSubject
-          ? `Re: ${baseSubject}`
-          : "Re:";
-
-      const inReplyTo = latest.messageIdHeader;
-      const references = Array.from(
-        new Set(
-          [
-            ...(latest.references ? latest.references.split(/\s+/) : []),
-            latest.messageIdHeader,
-          ].filter(Boolean)
-        )
-      ) as string[];
-
-      await this.gmailIntegration.sendReply(tokens, {
-        threadId: thread.gmailId,
-        to: recipient,
-        subject,
-        body,
-        inReplyTo,
-        references,
-      });
-
-      // Refresh thread to include the new message
-      return this.getThread(firebaseUid, threadId);
-    } catch (error: unknown) {
-      return handleServiceError<EmailThread>(error);
-    }
+    );
   }
 
   private extractEmailAddress(value: string): string {
@@ -396,5 +378,56 @@ export class EmailService {
     }
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  }
+
+  private async executeWithUser<T>(
+    firebaseUid: string,
+    action: (context: { user: User }) => Promise<ServiceResult<T>>
+  ): Promise<ServiceResult<T>> {
+    try {
+      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
+      if (!user) {
+        return createErrorResult<T>("User not found");
+      }
+      return await action({ user });
+    } catch (error) {
+      return handleServiceError<T>(error);
+    }
+  }
+
+  private async executeWithUserAndTokens<T>(
+    firebaseUid: string,
+    requirement: "any" | "access",
+    action: (context: {
+      user: User;
+      tokens: AuthTokens;
+    }) => Promise<ServiceResult<T>>
+  ): Promise<ServiceResult<T>> {
+    return this.executeWithUser(firebaseUid, async ({ user }) => {
+      const tokens = await this.getValidTokens(firebaseUid, requirement);
+      if (!tokens) {
+        return createErrorResult<T>("Gmail tokens not found");
+      }
+      return action({ user, tokens });
+    });
+  }
+
+  private async getValidTokens(
+    firebaseUid: string,
+    requirement: "any" | "access"
+  ): Promise<AuthTokens | null> {
+    const tokens = await this.userRepository.getTokens(firebaseUid);
+    if (!tokens) {
+      return null;
+    }
+
+    const hasAccess = Boolean(tokens.accessToken);
+    const hasRefresh = Boolean(tokens.refreshToken);
+
+    if (requirement === "access") {
+      return hasAccess ? tokens : null;
+    }
+
+    return hasAccess || hasRefresh ? tokens : null;
   }
 }

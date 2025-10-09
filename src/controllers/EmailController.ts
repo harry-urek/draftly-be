@@ -140,14 +140,27 @@ export class EmailController {
         id
       );
 
+      const payload = result.data;
+
       if (!result.success) {
+        if (payload?.thread) {
+          reply.code(207).send({
+            success: false,
+            error: result.error,
+            data: payload.thread,
+            upsertErrors: payload.upsertErrors ?? [],
+          });
+          return;
+        }
+
         reply.code(404).send({ error: result.error || "Thread not found" });
         return;
       }
 
       reply.send({
         success: true,
-        data: result.data,
+        data: payload?.thread,
+        upsertErrors: payload?.upsertErrors ?? [],
       });
     } catch (error: any) {
       console.error("Error getting message:", error);
@@ -180,7 +193,7 @@ export class EmailController {
       const result = await this.emailService.generateDraft(
         request.firebaseUser.firebaseUid,
         threadId,
-        context || {}
+        context
       );
 
       if (!result.success) {
@@ -270,14 +283,27 @@ export class EmailController {
         body.trim()
       );
 
+      const payload = result.data;
+
       if (!result.success) {
+        if (payload?.thread) {
+          reply.code(207).send({
+            success: false,
+            error: result.error,
+            data: payload.thread,
+            upsertErrors: payload.upsertErrors ?? [],
+          });
+          return;
+        }
+
         reply.code(400).send({ error: result.error });
         return;
       }
 
       reply.send({
         success: true,
-        data: result.data,
+        data: payload?.thread,
+        upsertErrors: payload?.upsertErrors ?? [],
       });
     } catch (error: any) {
       console.error("Error replying to message:", error);
