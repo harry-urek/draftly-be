@@ -21,7 +21,7 @@ export class OnboardingController {
         return;
       }
 
-      const firebaseUid = request.firebaseUser.firebaseUid;
+      const { firebaseUid } = request.firebaseUser;
 
       // Update onboarding status
       await prisma.user.update({
@@ -73,7 +73,7 @@ export class OnboardingController {
         return;
       }
 
-      const firebaseUid = request.firebaseUser.firebaseUid;
+      const { firebaseUid } = request.firebaseUser;
 
       const user = await prisma.user.findUnique({
         where: { firebaseUid },
@@ -112,7 +112,7 @@ export class OnboardingController {
         return;
       }
 
-      const firebaseUid = request.firebaseUser.firebaseUid;
+      const { firebaseUid } = request.firebaseUser;
       const questionnaireData = request.body as QuestionnaireResponses;
 
       if (!questionnaireData || Object.keys(questionnaireData).length === 0) {
@@ -159,7 +159,7 @@ export class OnboardingController {
           await prisma.user.update({
             where: { firebaseUid },
             data: {
-              onboardingStatus: "QUESTIONNAIRE_COMPLETED" as OnboardingStatus,
+              onboardingStatus: "PROFILE_ERROR" as OnboardingStatus,
             },
           });
         }

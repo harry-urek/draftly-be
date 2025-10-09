@@ -1,4 +1,4 @@
-import { ServiceResult } from "../types";
+import type { ServiceResult } from "../types/index";
 
 export { ServiceResult };
 
@@ -43,7 +43,9 @@ export class ExternalServiceError extends AppError {
   }
 }
 
-export function handleServiceError(error: unknown): ServiceResult {
+export function handleServiceError<T = unknown>(
+  error: unknown
+): ServiceResult<T> {
   console.error("Service error:", error);
 
   if (error instanceof AppError) {
@@ -73,7 +75,9 @@ export function createSuccessResult<T>(data: T): ServiceResult<T> {
   };
 }
 
-export function createErrorResult(error: string): ServiceResult {
+export function createErrorResult<T = unknown>(
+  error: string
+): ServiceResult<T> {
   return {
     success: false,
     error,

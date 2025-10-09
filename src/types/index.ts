@@ -18,6 +18,7 @@ export type OnboardingStatus =
   | "QUESTIONNAIRE_IN_PROGRESS"
   | "QUESTIONNAIRE_COMPLETED"
   | "PROFILE_GENERATING"
+  | "PROFILE_ERROR"
   | "ACTIVE";
 
 // Auth related types
@@ -36,6 +37,7 @@ export interface FirebaseUser {
 // Email related types
 export interface EmailMessage {
   id: string;
+  gmailId: string;
   threadId: string;
   from: string;
   to: string;
@@ -124,7 +126,7 @@ export interface AIStyleProfile {
 }
 
 // API Response types
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
@@ -141,7 +143,7 @@ export interface PaginatedResponse<T> extends ApiResponse<T> {
 }
 
 // Service layer types
-export interface ServiceResult<T = any> {
+export interface ServiceResult<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
@@ -159,6 +161,8 @@ export interface GmailMessage {
   body?: string;
   htmlBody?: string;
   isUnread: boolean;
+  messageIdHeader?: string;
+  references?: string;
 }
 
 // Email generation context

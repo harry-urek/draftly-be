@@ -1,9 +1,11 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 
 import { firebaseIntegration } from "../integrations/FirebaseIntegration";
+import { GmailIntegration } from "../integrations/GmailIntegration";
 import { prisma } from "../lib/prisma";
 import { slackNotifier } from "../lib/slack";
 import { setUserOnline } from "../lib/user";
+import { UserRepository } from "../repositories/UserRepository";
 
 export interface AuthenticatedUser {
   userId: string;
@@ -92,6 +94,9 @@ export function requireAuth() {
   return authMiddleware;
 }
 
+const gmailIntegration = new GmailIntegration();
+const userRepository = new UserRepository(prisma);
+
 // Enhanced middleware that checks Gmail permissions and forces re-verification
 export async function requireGmailAuth(
   request: FastifyRequest,
@@ -110,24 +115,36 @@ export async function requireGmailAuth(
     }
 
     // Check if user has valid Gmail credentials
-    const userWithGmail = await prisma.user.findUnique({
-      where: { firebaseUid: user.firebaseUid },
-      select: {
-        accessToken: true,
-        refreshToken: true,
-        lastActive: true,
-      },
-    });
+    const tokens = await userRepository.getTokens(user.firebaseUid);
 
-    // Require at least an access token. Refresh token is optional; Gmail API can still be accessed until expiry
-    if (!userWithGmail || !userWithGmail.accessToken) {
+    if (!tokens || !tokens.accessToken) {
       return reply.status(403).send({
         error: "Gmail authentication required",
         requiresAuth: "gmail",
       });
     }
 
-    // Don't block based on lastActive; Gmail API calls will surface expiry. Consider enhancing with explicit expiry tracking.
+    try {
+      const validation = await gmailIntegration.validateTokens(tokens);
+      if (!validation.valid) {
+        return reply.status(403).send({
+          error: "Gmail authentication required",
+          requiresAuth: "gmail",
+        });
+      }
+
+      if (validation.refreshedTokens?.accessToken) {
+        await userRepository.storeTokens(
+          user.firebaseUid,
+          validation.refreshedTokens
+        );
+      }
+    } catch (err) {
+      request.log?.error({ err }, "Gmail token validation failed");
+      return reply
+        .status(500)
+        .send({ error: "Server error during authentication" });
+    }
   } catch (error) {
     console.error("Gmail auth middleware error:", error);
     return reply

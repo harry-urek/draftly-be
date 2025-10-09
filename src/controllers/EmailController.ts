@@ -1,4 +1,7 @@
-﻿import { FastifyRequest, FastifyReply } from "fastify";
+﻿/* eslint-disable import/no-unresolved */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { FastifyRequest, FastifyReply } from "fastify";
+
 import { EmailService } from "../services/EmailService";
 
 export class EmailController {
@@ -56,7 +59,14 @@ export class EmailController {
 
       reply.send({
         success: true,
-        data: { synced: result.data, errors: 0 },
+        data: {
+          synced: result.data?.synced ?? 0,
+          errors: result.data?.errors ?? 0,
+          errorDetails:
+            result.data && result.data.errorDetails.length > 0
+              ? result.data.errorDetails
+              : null,
+        },
       });
     } catch (error: any) {
       console.error("Error syncing messages:", error);
@@ -125,7 +135,10 @@ export class EmailController {
         return;
       }
 
-      const result = await this.emailService.getThread(id);
+      const result = await this.emailService.getThread(
+        request.firebaseUser.firebaseUid,
+        id
+      );
 
       if (!result.success) {
         reply.code(404).send({ error: result.error || "Thread not found" });
@@ -224,6 +237,52 @@ export class EmailController {
       console.error("Error sending email:", error);
       reply.code(500).send({
         error: "Failed to send email",
+      });
+    }
+  }
+
+  async replyToMessage(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> {
+    try {
+      if (!request.firebaseUser) {
+        reply.code(401).send({ error: "Unauthorized" });
+        return;
+      }
+
+      const { id } = request.params as { id: string };
+      const { body } = request.body as { body: string };
+
+      if (!id) {
+        reply.code(400).send({ error: "Thread ID is required" });
+        return;
+      }
+
+      if (!body || !body.trim()) {
+        reply.code(400).send({ error: "Reply body is required" });
+        return;
+      }
+
+      const result = await this.emailService.replyToThread(
+        request.firebaseUser.firebaseUid,
+        id,
+        body.trim()
+      );
+
+      if (!result.success) {
+        reply.code(400).send({ error: result.error });
+        return;
+      }
+
+      reply.send({
+        success: true,
+        data: result.data,
+      });
+    } catch (error: any) {
+      console.error("Error replying to message:", error);
+      reply.code(500).send({
+        error: "Failed to send reply",
       });
     }
   }

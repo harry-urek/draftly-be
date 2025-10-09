@@ -58,8 +58,16 @@ export class AuthService {
           accessToken: tokens?.accessToken,
           refreshToken: tokens?.refreshToken,
         };
-        needsGmailAuth =
-          !(await this.gmailIntegration.validateTokens(safeTokens));
+        const validation =
+          await this.gmailIntegration.validateTokens(safeTokens);
+        needsGmailAuth = !validation.valid;
+
+        if (validation.refreshedTokens?.accessToken && validation.valid) {
+          await this.userRepository.storeTokens(
+            firebaseUser.firebaseUid,
+            validation.refreshedTokens
+          );
+        }
       }
 
       // Check onboarding status
@@ -101,8 +109,16 @@ export class AuthService {
           accessToken: tokens?.accessToken,
           refreshToken: tokens?.refreshToken,
         };
-        hasValidGmailAuth =
+        const validation =
           await this.gmailIntegration.validateTokens(safeTokens);
+        hasValidGmailAuth = validation.valid;
+
+        if (validation.refreshedTokens?.accessToken && validation.valid) {
+          await this.userRepository.storeTokens(
+            firebaseUid,
+            validation.refreshedTokens
+          );
+        }
       }
 
       const needsOnboarding =

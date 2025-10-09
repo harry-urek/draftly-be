@@ -1,3 +1,4 @@
+/* eslint-disable import/no-unresolved */
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import swagger from "@fastify/swagger";
@@ -6,22 +7,14 @@ import { PrismaClient } from "@prisma/client";
 import Fastify from "fastify";
 
 import config from "./config/index";
-import { backgroundService } from "./lib/background";
-
-// Controllers
 import { AuthControllerImpl } from "./controllers/AuthController";
 import { EmailController } from "./controllers/EmailController";
 import { OnboardingController } from "./controllers/OnboardingController";
-
-// Integrations
 import { GmailIntegration } from "./integrations/GmailIntegration";
 import { VertexAIIntegration } from "./integrations/VertexAIIntegration";
-
-// Repositories
+import { backgroundService } from "./lib/background";
 import { EmailRepository } from "./repositories/EmailRepository";
 import { UserRepository } from "./repositories/UserRepository";
-
-// Services
 import { AuthService } from "./services/AuthService";
 import { EmailService } from "./services/EmailService";
 import { UserService } from "./services/UserService";
@@ -183,6 +176,11 @@ export async function createApp() {
     "/api/emails/send",
     { preHandler: requireGmailAuth },
     emailController.sendEmail.bind(emailController)
+  );
+  fastify.post(
+    "/api/emails/:id/reply",
+    { preHandler: requireGmailAuth },
+    emailController.replyToMessage.bind(emailController)
   );
 
   // Onboarding routes
