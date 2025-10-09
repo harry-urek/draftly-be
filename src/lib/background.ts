@@ -1,11 +1,20 @@
 import { syncUserMessages } from "./gmail.js";
 import { cleanupOfflineUsers, isUserOnline } from "./user.js";
 import { prisma } from "./prisma.js";
-import redis from "./cache.js";
+// no direct cache usage in this module
 
 class BackgroundService {
   private intervalId: NodeJS.Timeout | null = null;
   private isRunning = false;
+  // Pluggable sync function; default to legacy Redis-based sync
+  private syncFn: (uid: string) => Promise<void | number> = async (uid) => {
+    await syncUserMessages(uid);
+  };
+
+  // Allow app to inject DB-backed sync (EmailService.syncUserEmails)
+  setSyncFunction(fn: (uid: string) => Promise<void | number>) {
+    this.syncFn = fn;
+  }
 
   start() {
     if (this.isRunning) {
@@ -44,7 +53,7 @@ class BackgroundService {
       // Sync messages for each online user
       for (const user of onlineUsers) {
         try {
-          await syncUserMessages(user.firebaseUid);
+          await this.syncFn(user.firebaseUid);
         } catch (error) {
           console.error(
             `Failed to sync messages for user ${user.firebaseUid}:`,
@@ -97,7 +106,7 @@ class BackgroundService {
   async syncAllUsers() {
     const users = await this.getOnlineUsers();
     for (const user of users) {
-      await syncUserMessages(user.firebaseUid);
+      await this.syncFn(user.firebaseUid);
     }
     console.log(`Manually synced ${users.length} users`);
   }

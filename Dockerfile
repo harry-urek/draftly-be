@@ -3,11 +3,17 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+# Ensure lifecycle scripts are not executed in containers
+ENV NPM_CONFIG_IGNORE_SCRIPTS=true
+# Install production deps without running lifecycle scripts
+RUN npm ci --omit=dev && npm cache clean --force
 
 FROM node:20-alpine AS development
 WORKDIR /app
 COPY package*.json ./
+# Ensure lifecycle scripts are not executed in containers
+ENV NPM_CONFIG_IGNORE_SCRIPTS=true
+# Install all deps for dev to keep build fast and stable
 RUN npm ci
 COPY . .
 RUN npx prisma generate

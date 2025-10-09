@@ -1,146 +1,162 @@
 import { FastifyInstance } from "fastify";
-import { requireAuth } from "../middleware/auth.js";
-import { prisma } from "../lib/prisma.js";
+import { requireAuth } from "../middleware/auth";
+import { prisma } from "../lib/prisma";
 import {
   fetchRecentEmailsForStyleLearning,
   cacheUserEmailsForOnboarding,
-} from "../lib/onboarding-emails.js";
-import { generateStyleProfile } from "../lib/vertexai.js";
+} from "../lib/onboarding-emails";
+import { generateStyleProfile } from "../lib/vertexai";
 
 export default async function onboardingRoutes(fastify: FastifyInstance) {
   // Start questionnaire and trigger background email fetching
-  fastify.post("/start", { preHandler: requireAuth() }, async (request, reply) => {
-    try {
-      const user = request.firebaseUser!;
+  fastify.post(
+    "/start",
+    { preHandler: requireAuth() },
+    async (request, reply) => {
+      try {
+        const user = request.firebaseUser!;
 
-      // Update onboarding status
-      await prisma.user.update({
-        where: { firebaseUid: user.firebaseUid },
-        data: { onboardingStatus: "QUESTIONNAIRE_IN_PROGRESS" },
-      });
+        // Update onboarding status
+        await prisma.user.update({
+          where: { firebaseUid: user.firebaseUid },
+          data: { onboardingStatus: "QUESTIONNAIRE_IN_PROGRESS" },
+        });
 
-      // Trigger background email fetching (non-blocking)
-      fetchAndCacheUserEmails(user.firebaseUid).catch((err) =>
-        console.error("Background email fetch failed:", err)
-      );
+        // Trigger background email fetching (non-blocking)
+        fetchAndCacheUserEmails(user.firebaseUid).catch((err) =>
+          console.error("Background email fetch failed:", err)
+        );
 
-      return reply.send({
-        status: "questionnaire_started",
-        message: "Background email analysis started",
-      });
-    } catch (error) {
-      console.error("Failed to start questionnaire:", error);
-      return reply.status(500).send({
-        error: "Failed to start onboarding",
-      });
+        return reply.send({
+          status: "questionnaire_started",
+          message: "Background email analysis started",
+        });
+      } catch (error) {
+        console.error("Failed to start questionnaire:", error);
+        return reply.status(500).send({
+          error: "Failed to start onboarding",
+        });
+      }
     }
-  });
+  );
 
   // Check onboarding status
-  fastify.get("/status", { preHandler: requireAuth() }, async (request, reply) => {
-    try {
-      const user = request.firebaseUser!;
+  fastify.get(
+    "/status",
+    { preHandler: requireAuth() },
+    async (request, reply) => {
+      try {
+        const user = request.firebaseUser!;
 
-      const userData = await prisma.user.findUnique({
-        where: { firebaseUid: user.firebaseUid },
-        select: {
-          onboardingStatus: true,
-          questionnaireData: true,
-          aiStyleProfile: true,
-        },
-      });
+        const userData = await prisma.user.findUnique({
+          where: { firebaseUid: user.firebaseUid },
+          select: {
+            onboardingStatus: true,
+            questionnaireData: true,
+            aiStyleProfile: true,
+          },
+        });
 
-      if (!userData) {
-        return reply.status(404).send({ error: "User not found" });
+        if (!userData) {
+          return reply.status(404).send({ error: "User not found" });
+        }
+
+        return reply.send({
+          status: userData.onboardingStatus,
+          hasQuestionnaire: !!userData.questionnaireData,
+          hasProfile: !!userData.aiStyleProfile,
+        });
+      } catch (error) {
+        console.error("Failed to get onboarding status:", error);
+        return reply.status(500).send({
+          error: "Failed to get status",
+        });
       }
-
-      return reply.send({
-        status: userData.onboardingStatus,
-        hasQuestionnaire: !!userData.questionnaireData,
-        hasProfile: !!userData.aiStyleProfile,
-      });
-    } catch (error) {
-      console.error("Failed to get onboarding status:", error);
-      return reply.status(500).send({
-        error: "Failed to get status",
-      });
     }
-  });
+  );
 
   // Submit questionnaire responses
-  fastify.post("/submit", { preHandler: requireAuth() }, async (request, reply) => {
-    try {
-      const user = request.firebaseUser!;
-      const responses = request.body as QuestionnaireResponses;
+  fastify.post(
+    "/submit",
+    { preHandler: requireAuth() },
+    async (request, reply) => {
+      try {
+        const user = request.firebaseUser!;
+        const responses = request.body as QuestionnaireResponses;
 
-      // Validate response structure
-      if (!responses.stylePreferences || !responses.scenarioResponses) {
-        return reply.status(400).send({
-          error: "Invalid questionnaire data",
+        // Validate response structure
+        if (!responses.stylePreferences || !responses.scenarioResponses) {
+          return reply.status(400).send({
+            error: "Invalid questionnaire data",
+          });
+        }
+
+        // Save questionnaire responses
+        await prisma.user.update({
+          where: { firebaseUid: user.firebaseUid },
+          data: {
+            questionnaireData: responses as any,
+            onboardingStatus: "QUESTIONNAIRE_COMPLETED",
+          },
+        });
+
+        // Trigger AI profile generation (non-blocking)
+        generateUserStyleProfile(user.firebaseUid).catch((err) =>
+          console.error("Profile generation failed:", err)
+        );
+
+        return reply.send({
+          status: "submitted",
+          message: "AI style profile generation started",
+        });
+      } catch (error) {
+        console.error("Failed to submit questionnaire:", error);
+        return reply.status(500).send({
+          error: "Failed to submit questionnaire",
         });
       }
-
-      // Save questionnaire responses
-      await prisma.user.update({
-        where: { firebaseUid: user.firebaseUid },
-        data: {
-          questionnaireData: responses as any,
-          onboardingStatus: "QUESTIONNAIRE_COMPLETED",
-        },
-      });
-
-      // Trigger AI profile generation (non-blocking)
-      generateUserStyleProfile(user.firebaseUid).catch((err) =>
-        console.error("Profile generation failed:", err)
-      );
-
-      return reply.send({
-        status: "submitted",
-        message: "AI style profile generation started",
-      });
-    } catch (error) {
-      console.error("Failed to submit questionnaire:", error);
-      return reply.status(500).send({
-        error: "Failed to submit questionnaire",
-      });
     }
-  });
+  );
 
   // Get AI-generated style profile
-  fastify.get("/profile", { preHandler: requireAuth() }, async (request, reply) => {
-    try {
-      const user = request.firebaseUser!;
+  fastify.get(
+    "/profile",
+    { preHandler: requireAuth() },
+    async (request, reply) => {
+      try {
+        const user = request.firebaseUser!;
 
-      const userData = await prisma.user.findUnique({
-        where: { firebaseUid: user.firebaseUid },
-        select: {
-          aiStyleProfile: true,
-          onboardingStatus: true,
-        },
-      });
+        const userData = await prisma.user.findUnique({
+          where: { firebaseUid: user.firebaseUid },
+          select: {
+            aiStyleProfile: true,
+            onboardingStatus: true,
+          },
+        });
 
-      if (!userData) {
-        return reply.status(404).send({ error: "User not found" });
-      }
+        if (!userData) {
+          return reply.status(404).send({ error: "User not found" });
+        }
 
-      if (!userData.aiStyleProfile) {
-        return reply.status(404).send({
-          error: "Profile not yet generated",
+        if (!userData.aiStyleProfile) {
+          return reply.status(404).send({
+            error: "Profile not yet generated",
+            status: userData.onboardingStatus,
+          });
+        }
+
+        return reply.send({
+          profile: userData.aiStyleProfile,
           status: userData.onboardingStatus,
         });
+      } catch (error) {
+        console.error("Failed to get style profile:", error);
+        return reply.status(500).send({
+          error: "Failed to get profile",
+        });
       }
-
-      return reply.send({
-        profile: userData.aiStyleProfile,
-        status: userData.onboardingStatus,
-      });
-    } catch (error) {
-      console.error("Failed to get style profile:", error);
-      return reply.status(500).send({
-        error: "Failed to get profile",
-      });
     }
-  });
+  );
 }
 
 // Background job: Fetch user's recent emails for style learning

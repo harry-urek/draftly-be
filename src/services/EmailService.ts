@@ -1,18 +1,18 @@
-import { EmailRepository } from "../repositories/EmailRepository.js";
-import { UserRepository } from "../repositories/UserRepository.js";
-import { GmailIntegration } from "../integrations/GmailIntegration.js";
-import { VertexAIIntegration } from "../integrations/VertexAIIntegration.js";
+import { EmailRepository } from "../repositories/EmailRepository";
+import { UserRepository } from "../repositories/UserRepository";
+import { GmailIntegration } from "../integrations/GmailIntegration";
+import { VertexAIIntegration } from "../integrations/VertexAIIntegration";
 import {
   EmailThread,
   EmailDraft,
   EmailGenerationContext,
   AIStyleProfile,
-} from "../types/index.js";
+} from "../types";
 import {
   ServiceResult,
   createSuccessResult,
   handleServiceError,
-} from "../utils/errors.js";
+} from "../utils/errors";
 
 export class EmailService {
   constructor(
@@ -95,6 +95,7 @@ export class EmailService {
             to: message.to,
             subject: message.subject,
             body: message.body || message.snippet,
+            htmlBody: message.htmlBody,
             timestamp: new Date(message.date),
             isUnread: message.isUnread,
           });
@@ -125,9 +126,8 @@ export class EmailService {
       }
 
       // Get user's style profile
-      const styleProfile = await this.userRepository.getStyleProfile(
-        firebaseUid
-      );
+      const styleProfile =
+        await this.userRepository.getStyleProfile(firebaseUid);
       if (!styleProfile) {
         return {
           success: false,

@@ -1,11 +1,11 @@
-import { UserRepository } from "../repositories/UserRepository.js";
-import { VertexAIIntegration } from "../integrations/VertexAIIntegration.js";
-import { User, AIStyleProfile } from "../types/index.js";
+import { UserRepository } from "../repositories/UserRepository";
+import { VertexAIIntegration } from "../integrations/VertexAIIntegration";
+import { User, AIStyleProfile } from "../types";
 import {
   ServiceResult,
   createSuccessResult,
   handleServiceError,
-} from "../utils/errors.js";
+} from "../utils/errors";
 
 export class UserService {
   constructor(
@@ -52,9 +52,8 @@ export class UserService {
       );
 
       // Generate AI style profile
-      const styleProfile = await this.vertexAIIntegration.generateStyleProfile(
-        questionnaireData
-      );
+      const styleProfile =
+        await this.vertexAIIntegration.generateStyleProfile(questionnaireData);
 
       // Store the profile and questionnaire data
       await this.userRepository.storeStyleProfile(firebaseUid, styleProfile);

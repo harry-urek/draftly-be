@@ -1,6 +1,9 @@
 import { FastifyRequest, FastifyReply } from "fastify";
-import { firebaseIntegration } from "../integrations/FirebaseIntegration.js";
-import { slackNotifier } from "../lib/slack.js";
+
+import { firebaseIntegration } from "../integrations/FirebaseIntegration";
+import { prisma } from "../lib/prisma";
+import { slackNotifier } from "../lib/slack";
+import { setUserOnline } from "../lib/user";
 
 export interface AuthenticatedUser {
   userId: string;
@@ -41,7 +44,9 @@ export async function authMiddleware(
     const decodedToken = await firebaseIntegration.verifyIdToken(idToken);
 
     // Get user info from Firebase Auth
-    const userRecord = await firebaseIntegration.getAdminAuth().getUser(decodedToken.uid);
+    const userRecord = await firebaseIntegration
+      .getAdminAuth()
+      .getUser(decodedToken.uid);
 
     // Attach user to request
     request.firebaseUser = {
@@ -57,6 +62,13 @@ export async function authMiddleware(
       userId: decodedToken.uid,
       email: decodedToken.email || userRecord.email || "",
     };
+
+    // Update presence so background sync can see online users
+    try {
+      await setUserOnline(decodedToken.uid);
+    } catch (e) {
+      request.log?.warn({ err: e }, "Failed to update user presence");
+    }
   } catch (error) {
     console.error("Auth middleware error:", (error as Error).message);
 
@@ -78,4 +90,48 @@ export async function authMiddleware(
 // Helper to require authentication on routes
 export function requireAuth() {
   return authMiddleware;
+}
+
+// Enhanced middleware that checks Gmail permissions and forces re-verification
+export async function requireGmailAuth(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  try {
+    // First run the standard auth check
+    await authMiddleware(request, reply);
+
+    // If headers were sent, auth check failed
+    if (reply.sent) return;
+
+    const user = request.firebaseUser;
+    if (!user) {
+      return reply.status(401).send({ error: "Authentication required" });
+    }
+
+    // Check if user has valid Gmail credentials
+    const userWithGmail = await prisma.user.findUnique({
+      where: { firebaseUid: user.firebaseUid },
+      select: {
+        accessToken: true,
+        refreshToken: true,
+        lastActive: true,
+      },
+    });
+
+    // Require at least an access token. Refresh token is optional; Gmail API can still be accessed until expiry
+    if (!userWithGmail || !userWithGmail.accessToken) {
+      return reply.status(403).send({
+        error: "Gmail authentication required",
+        requiresAuth: "gmail",
+      });
+    }
+
+    // Don't block based on lastActive; Gmail API calls will surface expiry. Consider enhancing with explicit expiry tracking.
+  } catch (error) {
+    console.error("Gmail auth middleware error:", error);
+    return reply
+      .status(500)
+      .send({ error: "Server error during authentication" });
+  }
 }

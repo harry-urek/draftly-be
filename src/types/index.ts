@@ -157,6 +157,7 @@ export interface GmailMessage {
   date: string;
   snippet: string;
   body?: string;
+  htmlBody?: string;
   isUnread: boolean;
 }
 
