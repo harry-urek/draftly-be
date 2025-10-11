@@ -38,6 +38,69 @@ export class EmailController {
     }
   }
 
+  async getDrafts(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    try {
+      if (!request.firebaseUser) {
+        reply.code(401).send({ error: "Unauthorized" });
+        return;
+      }
+
+      const result = await this.emailService.getDrafts(
+        request.firebaseUser.firebaseUid
+      );
+
+      if (!result.success) {
+        reply.code(400).send({ error: result.error });
+        return;
+      }
+
+      reply.send({ success: true, data: result.data });
+    } catch (error: any) {
+      console.error("Error getting drafts:", error);
+      reply.code(500).send({ error: "Failed to get drafts" });
+    }
+  }
+
+  async sendNewEmail(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> {
+    try {
+      if (!request.firebaseUser) {
+        reply.code(401).send({ error: "Unauthorized" });
+        return;
+      }
+
+      const { to, subject, body } = request.body as {
+        to: string;
+        subject: string;
+        body: string; // HTML body
+      };
+
+      if (!to || !subject || !body) {
+        reply.code(400).send({ error: "to, subject and body are required" });
+        return;
+      }
+
+      const result = await this.emailService.sendNewEmail(
+        request.firebaseUser.firebaseUid,
+        to,
+        subject,
+        body
+      );
+
+      if (!result.success) {
+        reply.code(400).send({ error: result.error });
+        return;
+      }
+
+      reply.send({ success: true, data: { messageId: result.data } });
+    } catch (error: any) {
+      console.error("Error sending email:", error);
+      reply.code(500).send({ error: "Failed to send email" });
+    }
+  }
+
   async syncMessages(
     request: FastifyRequest,
     reply: FastifyReply
@@ -157,9 +220,16 @@ export class EmailController {
         return;
       }
 
+      // Also return any cached suggested reply for this thread
+      const suggested = await this.emailService.getSuggestedReply(
+        request.firebaseUser.firebaseUid,
+        id
+      );
+
       reply.send({
         success: true,
         data: payload?.thread,
+        suggestedReply: suggested.success ? suggested.data : null,
         upsertErrors: payload?.upsertErrors ?? [],
       });
     } catch (error: any) {
@@ -310,6 +380,75 @@ export class EmailController {
       reply.code(500).send({
         error: "Failed to send reply",
       });
+    }
+  }
+
+  // New: trigger suggested reply generation (cache-only, background)
+  async generateSuggested(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> {
+    try {
+      if (!request.firebaseUser) {
+        reply.code(401).send({ error: "Unauthorized" });
+        return;
+      }
+
+      const { threadId, context } = request.body as {
+        threadId: string;
+        context?: any;
+      };
+
+      if (!threadId) {
+        reply.code(400).send({ error: "Thread ID is required" });
+        return;
+      }
+
+      // Fire-and-forget
+      void this.emailService.generateAndCacheSuggestedReply(
+        request.firebaseUser.firebaseUid,
+        threadId,
+        context
+      );
+
+      reply.send({ success: true, status: "started" });
+    } catch (error: any) {
+      console.error("Error generating suggested reply:", error);
+      reply.code(500).send({ error: "Failed to generate suggested reply" });
+    }
+  }
+
+  // New: fetch cached suggested reply
+  async getSuggested(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> {
+    try {
+      if (!request.firebaseUser) {
+        reply.code(401).send({ error: "Unauthorized" });
+        return;
+      }
+
+      const { id } = request.params as { id: string };
+      if (!id) {
+        reply.code(400).send({ error: "Thread ID is required" });
+        return;
+      }
+
+      const result = await this.emailService.getSuggestedReply(
+        request.firebaseUser.firebaseUid,
+        id
+      );
+
+      if (!result.success) {
+        reply.code(400).send({ error: result.error });
+        return;
+      }
+
+      reply.send({ success: true, data: result.data });
+    } catch (error: any) {
+      console.error("Error getting suggested reply:", error);
+      reply.code(500).send({ error: "Failed to fetch suggested reply" });
     }
   }
 }

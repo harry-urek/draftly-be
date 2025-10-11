@@ -150,7 +150,7 @@ export class OnboardingController {
             where: { firebaseUid },
             data: {
               aiStyleProfile: styleProfile as unknown as object,
-              onboardingStatus: "ACTIVE" as OnboardingStatus,
+              onboardingStatus: "COMPLETED_INIT_PROFILE" as OnboardingStatus,
             },
           });
         } catch (err) {

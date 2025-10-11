@@ -41,6 +41,8 @@ export const CACHE_KEYS = {
   USER_STARRED: (userId: string) => `user:${userId}:starred`,
   USER_PRESENCE: (userId: string) => `user:${userId}:presence`,
   USER_TOKENS: (userId: string) => `user:${userId}:tokens`,
+  USER_SUGGESTED_REPLY: (userId: string, threadId: string) =>
+    `user:${userId}:thread:${threadId}:suggested-reply`,
 };
 
 // Cache TTL constants (in seconds)
@@ -48,6 +50,7 @@ export const CACHE_TTL = {
   MAIL: 60 * 5, // 5 minutes
   PRESENCE: 60 * 5, // 5 minutes
   OFFLINE_EXPIRY: 60 * 60 * 2, // 2 hours
+  SUGGESTED_REPLY: 60 * 5, // 5 minutes
 };
 
 export class CacheManager {
@@ -181,6 +184,29 @@ export class CacheManager {
     const key = CACHE_KEYS.USER_PRESENCE(userId);
     const presence = await redis.get(key);
     return presence ? parseInt(presence) : null;
+  }
+
+  // Suggested reply cache
+  static async setSuggestedReply(
+    userId: string,
+    threadId: string,
+    payload: { content: string; tone?: string; createdAt: string }
+  ) {
+    const key = CACHE_KEYS.USER_SUGGESTED_REPLY(userId, threadId);
+    await this.setJson(key, CACHE_TTL.SUGGESTED_REPLY, payload);
+  }
+
+  static async getSuggestedReply(
+    userId: string,
+    threadId: string
+  ): Promise<{ content: string; tone?: string; createdAt: string } | null> {
+    const key = CACHE_KEYS.USER_SUGGESTED_REPLY(userId, threadId);
+    const cached = await redis.get(key);
+    return this.parseJson<{
+      content: string;
+      tone?: string;
+      createdAt: string;
+    }>(cached);
   }
 
   static async isUserOnline(userId: string): Promise<boolean> {

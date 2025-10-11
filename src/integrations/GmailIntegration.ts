@@ -28,8 +28,9 @@ export class GmailIntegration {
         "https://www.googleapis.com/auth/userinfo.profile",
       ],
       include_granted_scopes: true,
-      // Avoid forcing consent every time; Google will reuse prior approval
-      // prompt: "consent", // removed to prevent repeated permission prompts
+      // Force consent to ensure a refresh_token is returned reliably.
+      // Without this, some users may never receive a refresh token and will lose access when the access token expires.
+      prompt: "consent",
     });
   }
 

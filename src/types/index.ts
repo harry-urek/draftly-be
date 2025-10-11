@@ -19,6 +19,8 @@ export type OnboardingStatus =
   | "QUESTIONNAIRE_COMPLETED"
   | "PROFILE_GENERATING"
   | "PROFILE_ERROR"
+  | "COMPLETED_INIT_PROFILE"
+  | "PROFILE_DONE"
   | "ACTIVE";
 
 // Auth related types

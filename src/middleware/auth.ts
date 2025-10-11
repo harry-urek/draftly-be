@@ -118,7 +118,7 @@ export async function requireGmailAuth(
     // Check if user has valid Gmail credentials
     const tokens = await userRepository.getTokens(user.firebaseUid);
 
-    if (!tokens || !tokens.accessToken) {
+    if (!tokens || (!tokens.accessToken && !tokens.refreshToken)) {
       return reply.status(403).send({
         error: "Gmail authentication required",
         requiresAuth: "gmail",

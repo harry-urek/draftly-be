@@ -156,6 +156,11 @@ export async function createApp() {
     { preHandler: requireGmailAuth },
     emailController.getMessages.bind(emailController)
   );
+  fastify.get(
+    "/api/emails/drafts",
+    { preHandler: requireGmailAuth },
+    emailController.getDrafts.bind(emailController)
+  );
   fastify.post(
     "/api/emails/sync",
     { preHandler: requireGmailAuth },
@@ -171,6 +176,17 @@ export async function createApp() {
     { preHandler: requireGmailAuth },
     emailController.getMessage.bind(emailController)
   );
+  // Suggested reply routes
+  fastify.post(
+    "/api/emails/suggest",
+    { preHandler: requireGmailAuth },
+    emailController.generateSuggested.bind(emailController)
+  );
+  fastify.get(
+    "/api/emails/:id/suggested",
+    { preHandler: requireGmailAuth },
+    emailController.getSuggested.bind(emailController)
+  );
   fastify.post(
     "/api/emails/draft",
     { preHandler: requireGmailAuth },
@@ -180,6 +196,11 @@ export async function createApp() {
     "/api/emails/send",
     { preHandler: requireGmailAuth },
     emailController.sendEmail.bind(emailController)
+  );
+  fastify.post(
+    "/api/emails/new",
+    { preHandler: requireGmailAuth },
+    emailController.sendNewEmail.bind(emailController)
   );
   fastify.post(
     "/api/emails/:id/reply",

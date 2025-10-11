@@ -1,6 +1,6 @@
-import { VertexAI, SchemaType } from "@google-cloud/vertexai";
 import * as fs from "fs/promises";
 import * as path from "path";
+import { VertexAI, SchemaType } from "@google-cloud/vertexai";
 
 // Initialize Vertex AI
 const vertex_ai = new VertexAI({
