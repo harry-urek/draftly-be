@@ -12,12 +12,19 @@ type GenerativeAIModel = ReturnType<VertexAI["getGenerativeModel"]>;
 export class VertexAIIntegration {
   private vertex_ai: VertexAI;
   private generativeModel: GenerativeAIModel;
-  private asyncSleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+  private asyncSleep(ms: number) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
   private isTransient(err: unknown): boolean {
     const msg = String((err as Error)?.message || err || "");
     return /(429|RESOURCE_EXHAUSTED|Too Many Requests|UNAVAILABLE)/i.test(msg);
   }
-  private async retry<T>(fn: () => Promise<T>, retries = 3, baseDelayMs = 700, maxDelayMs = 8000): Promise<T> {
+  private async retry<T>(
+    fn: () => Promise<T>,
+    retries = 3,
+    baseDelayMs = 700,
+    maxDelayMs = 8000
+  ): Promise<T> {
     let attempt = 0;
     while (true) {
       try {
@@ -25,9 +32,14 @@ export class VertexAIIntegration {
       } catch (e) {
         attempt++;
         if (!this.isTransient(e) || attempt > retries) throw e;
-        const backoff = Math.min(maxDelayMs, Math.round(baseDelayMs * Math.pow(2, attempt - 1)));
+        const backoff = Math.min(
+          maxDelayMs,
+          Math.round(baseDelayMs * Math.pow(2, attempt - 1))
+        );
         const jitter = Math.round(backoff * (0.8 + Math.random() * 0.4));
-  console.warn(`[AI] Vertex retry in ${jitter}ms (attempt ${attempt}/${retries})`);
+        console.warn(
+          `[AI] Vertex retry in ${jitter}ms (attempt ${attempt}/${retries})`
+        );
         await this.asyncSleep(jitter);
       }
     }
@@ -47,13 +59,17 @@ export class VertexAIIntegration {
   async testConnection(): Promise<boolean> {
     try {
       const testPrompt = "Say 'Hello' in one word.";
-      const result = await this.retry(() => withAiRateLimit(() => this.generativeModel.generateContent({
-        contents: [{ role: "user", parts: [{ text: testPrompt }] }],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 10,
-        },
-      })));
+      const result = await this.retry(() =>
+        withAiRateLimit(() =>
+          this.generativeModel.generateContent({
+            contents: [{ role: "user", parts: [{ text: testPrompt }] }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 10,
+            },
+          })
+        )
+      );
 
       return !!result.response;
     } catch (error) {
@@ -80,13 +96,21 @@ export class VertexAIIntegration {
       // lightweight token estimate (chars/4 ≈ tokens); log if too large
       const approxTokens = Math.round(prompt.length / 4);
       if (approxTokens > 6000) {
-        console.warn(`[AI] Large prompt for style profile (~${approxTokens} tokens). Consider trimming questionnaire input.`);
+        console.warn(
+          `[AI] Large prompt for style profile (~${approxTokens} tokens). Consider trimming questionnaire input.`
+        );
       }
 
-      const result = await this.retry(() => withAiRateLimit(() => this.generativeModel.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig,
-      })), 4);
+      const result = await this.retry(
+        () =>
+          withAiRateLimit(() =>
+            this.generativeModel.generateContent({
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              generationConfig,
+            })
+          ),
+        4
+      );
 
       const { response } = result;
       const candidate = response.candidates?.[0];
@@ -120,13 +144,21 @@ export class VertexAIIntegration {
       // lightweight token estimate for email draft prompt
       const approxTokens = Math.round(prompt.length / 4);
       if (approxTokens > 6000) {
-        console.warn(`[AI] Large draft prompt (~${approxTokens} tokens). Trimming thread history.`);
+        console.warn(
+          `[AI] Large draft prompt (~${approxTokens} tokens). Trimming thread history.`
+        );
       }
 
-      const result = await this.retry(() => withAiRateLimit(() => this.generativeModel.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig,
-      })), 4);
+      const result = await this.retry(
+        () =>
+          withAiRateLimit(() =>
+            this.generativeModel.generateContent({
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              generationConfig,
+            })
+          ),
+        4
+      );
 
       const { response } = result;
       const candidate = response.candidates?.[0];

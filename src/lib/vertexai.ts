@@ -28,10 +28,15 @@ function sleep(ms: number) {
 
 function isTransientVertexError(err: unknown): boolean {
   const msg = String((err as Error)?.message || err || "");
-  return /\b(429|RESOURCE_EXHAUSTED|Too Many Requests|UNAVAILABLE|retry)\b/i.test(msg);
+  return /\b(429|RESOURCE_EXHAUSTED|Too Many Requests|UNAVAILABLE|retry)\b/i.test(
+    msg
+  );
 }
 
-async function withRetry<T>(fn: () => Promise<T>, options?: { retries?: number; baseDelayMs?: number; maxDelayMs?: number }): Promise<T> {
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  options?: { retries?: number; baseDelayMs?: number; maxDelayMs?: number }
+): Promise<T> {
   const retries = options?.retries ?? 3;
   const base = options?.baseDelayMs ?? 800;
   const max = options?.maxDelayMs ?? 8000;
@@ -44,10 +49,15 @@ async function withRetry<T>(fn: () => Promise<T>, options?: { retries?: number; 
       if (!isTransientVertexError(e) || attempt > retries) {
         throw e;
       }
-      const backoff = Math.min(max, Math.round(base * Math.pow(2, attempt - 1)));
+      const backoff = Math.min(
+        max,
+        Math.round(base * Math.pow(2, attempt - 1))
+      );
       // jitter ±20%
       const jitter = Math.round(backoff * (0.8 + Math.random() * 0.4));
-      console.warn(`[AI] Transient Vertex error, retrying in ${jitter}ms (attempt ${attempt}/${retries})`);
+      console.warn(
+        `[AI] Transient Vertex error, retrying in ${jitter}ms (attempt ${attempt}/${retries})`
+      );
       await sleep(jitter);
     }
   }
@@ -300,12 +310,20 @@ export async function generateStyleProfile(
     // Generate content
     const approxTokens = Math.round(finalPrompt.length / 4);
     if (approxTokens > 6000) {
-      console.warn(`[AI] Large style profile prompt (~${approxTokens} tokens). Consider trimming questionnaire data.`);
+      console.warn(
+        `[AI] Large style profile prompt (~${approxTokens} tokens). Consider trimming questionnaire data.`
+      );
     }
-    const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
-      contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
-      generationConfig,
-    })), { retries: 4, baseDelayMs: 700, maxDelayMs: 9000 });
+    const result = await withRetry(
+      () =>
+        withAiRateLimit(() =>
+          generativeModel.generateContent({
+            contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+            generationConfig,
+          })
+        ),
+      { retries: 4, baseDelayMs: 700, maxDelayMs: 9000 }
+    );
 
     const response = result.response;
     const candidate = response.candidates?.[0];
@@ -456,14 +474,20 @@ ${joined}`.trim();
   if (approxTokens > 6000) {
     console.warn(`[AI] Large stylometry prompt (~${approxTokens} tokens).`);
   }
-  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: 0.2,
-      maxOutputTokens: 512,
-      responseMimeType: "application/json",
-    },
-  })), { retries: 4 });
+  const result = await withRetry(
+    () =>
+      withAiRateLimit(() =>
+        generativeModel.generateContent({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 512,
+            responseMimeType: "application/json",
+          },
+        })
+      ),
+    { retries: 4 }
+  );
   const text =
     result.response.candidates?.[0]?.content?.parts?.[0]?.text ||
     '{"features":{},"summary":""}';
@@ -492,12 +516,20 @@ Write a reply in one continuous block, no commentary.`;
 
   const approxTokens = Math.round(prompt.length / 4);
   if (approxTokens > 6000) {
-    console.warn(`[AI] Large candidate reply prompt (~${approxTokens} tokens).`);
+    console.warn(
+      `[AI] Large candidate reply prompt (~${approxTokens} tokens).`
+    );
   }
-  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.4, maxOutputTokens: 400 },
-  })), { retries: 4 });
+  const result = await withRetry(
+    () =>
+      withAiRateLimit(() =>
+        generativeModel.generateContent({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.4, maxOutputTokens: 400 },
+        })
+      ),
+    { retries: 4 }
+  );
   return result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
@@ -516,14 +548,20 @@ ${modelText}`;
   if (approxTokens > 6000) {
     console.warn(`[AI] Large compare prompt (~${approxTokens} tokens).`);
   }
-  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 400,
-      responseMimeType: "application/json",
-    },
-  })), { retries: 4 });
+  const result = await withRetry(
+    () =>
+      withAiRateLimit(() =>
+        generativeModel.generateContent({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 400,
+            responseMimeType: "application/json",
+          },
+        })
+      ),
+    { retries: 4 }
+  );
   const text =
     result.response.candidates?.[0]?.content?.parts?.[0]?.text ||
     '{"keyTraits":[],"notes":[]}';
@@ -555,14 +593,20 @@ Update and tighten the persona description (3-5 bullet points). Return JSON with
   if (approxTokens > 6000) {
     console.warn(`[AI] Large refine prompt (~${approxTokens} tokens).`);
   }
-  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: 0.2,
-      maxOutputTokens: 400,
-      responseMimeType: "application/json",
-    },
-  })), { retries: 4 });
+  const result = await withRetry(
+    () =>
+      withAiRateLimit(() =>
+        generativeModel.generateContent({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 400,
+            responseMimeType: "application/json",
+          },
+        })
+      ),
+    { retries: 4 }
+  );
   const text =
     result.response.candidates?.[0]?.content?.parts?.[0]?.text ||
     '{"updatedPersona":"","keyTraits":[]}';
@@ -597,14 +641,20 @@ Validate which are universal vs context-dependent across the user's three scenar
   if (approxTokens > 6000) {
     console.warn(`[AI] Large consistency prompt (~${approxTokens} tokens).`);
   }
-  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 300,
-      responseMimeType: "application/json",
-    },
-  })), { retries: 4 });
+  const result = await withRetry(
+    () =>
+      withAiRateLimit(() =>
+        generativeModel.generateContent({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 300,
+            responseMimeType: "application/json",
+          },
+        })
+      ),
+    { retries: 4 }
+  );
   const text =
     result.response.candidates?.[0]?.content?.parts?.[0]?.text ||
     '{"universal":[],"contextual":[]}';
@@ -632,7 +682,7 @@ ${JSON.stringify(validated.universal, null, 2)}
 Contextual traits (lower weight):
 ${JSON.stringify(validated.contextual, null, 2)}
 
-${greetingPref ? `User's explicit preferred greeting style (seed this into structuralPreferences.greetingStyle lists appropriately): ${greetingPref}` : ''}
+${greetingPref ? `User's explicit preferred greeting style (seed this into structuralPreferences.greetingStyle lists appropriately): ${greetingPref}` : ""}
 
 Return strictly valid JSON conforming to the provided schema.`;
 
@@ -647,12 +697,20 @@ Return strictly valid JSON conforming to the provided schema.`;
 
   const approxTokens = Math.round(prompt.length / 4);
   if (approxTokens > 6000) {
-    console.warn(`[AI] Large final synthesis prompt (~${approxTokens} tokens).`);
+    console.warn(
+      `[AI] Large final synthesis prompt (~${approxTokens} tokens).`
+    );
   }
-  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig,
-  })), { retries: 5, baseDelayMs: 900 });
+  const result = await withRetry(
+    () =>
+      withAiRateLimit(() =>
+        generativeModel.generateContent({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig,
+        })
+      ),
+    { retries: 5, baseDelayMs: 900 }
+  );
   const text =
     result.response.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
   try {
@@ -673,10 +731,17 @@ function extractGreetingPreference(questionnaire: unknown): string | undefined {
   try {
     const q = questionnaire as Record<string, unknown>;
     // Support shapes like { foundational: { greetingPreference: 'Hi {FirstName}' } }
-    const foundational = (q?.["foundational"] as Record<string, unknown> | undefined) ?? undefined;
+    const foundational =
+      (q?.["foundational"] as Record<string, unknown> | undefined) ?? undefined;
     const fgp = foundational?.["greetingPreference"] as unknown;
     const topLevel = q?.["greetingPreference"] as unknown;
-    const gp = (typeof fgp === 'string' ? fgp : typeof topLevel === 'string' ? topLevel : undefined) as string | undefined;
+    const gp = (
+      typeof fgp === "string"
+        ? fgp
+        : typeof topLevel === "string"
+          ? topLevel
+          : undefined
+    ) as string | undefined;
     if (gp && gp.length > 0) return gp;
   } catch {
     // ignore
@@ -710,7 +775,8 @@ export async function generateEmailDraft(
 ): Promise<string> {
   try {
     // Trim overly long inputs to avoid excessive tokens
-    const clamp = (s: string, max = 4000) => (s.length > max ? s.slice(0, max) + "…" : s);
+    const clamp = (s: string, max = 4000) =>
+      s.length > max ? s.slice(0, max) + "…" : s;
     const safeOriginal = clamp(emailContext.originalEmail, 4000);
     const history = emailContext.threadHistory ?? [];
     const safeHistory = history
@@ -725,11 +791,7 @@ ${JSON.stringify(styleProfile, null, 2)}
 
 **EMAIL CONTEXT:**
 Original Email: ${safeOriginal}
-${
-  safeHistory.length
-    ? `Thread History: ${safeHistory.join("\n---\n")}`
-    : ""
-}
+${safeHistory.length ? `Thread History: ${safeHistory.join("\n---\n")}` : ""}
 ${emailContext.senderName ? `Sender Name: ${emailContext.senderName}` : ""}
 ${emailContext.senderEmail ? `Sender Email: ${emailContext.senderEmail}` : ""}
 ${emailContext.senderCompany ? `Sender Company/Firm: ${emailContext.senderCompany}` : ""}
@@ -771,12 +833,20 @@ Generate the email draft now:
 
     const approxTokens = Math.round(prompt.length / 4);
     if (approxTokens > 6000) {
-      console.warn(`[AI] Large email draft prompt (~${approxTokens} tokens). Consider trimming history.`);
+      console.warn(
+        `[AI] Large email draft prompt (~${approxTokens} tokens). Consider trimming history.`
+      );
     }
-    const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig,
-    })), { retries: 4, baseDelayMs: 700 });
+    const result = await withRetry(
+      () =>
+        withAiRateLimit(() =>
+          generativeModel.generateContent({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig,
+          })
+        ),
+      { retries: 4, baseDelayMs: 700 }
+    );
 
     const response = result.response;
     const candidate = response.candidates?.[0];

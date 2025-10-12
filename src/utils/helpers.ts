@@ -121,7 +121,8 @@ export function extractSignatureBlock(text: string): string | null {
   // Fallback: take the last 6 lines as a potential signature if they contain typical cues
   const lines = text.split(/\r?\n/);
   const tail = lines.slice(-6).join("\n").trim();
-  const cues = /(Inc\.|LLC|Ltd\.|Head|Office|Mobile|Phone|www\.|http|@|CEO|CTO|Manager|Director)/i;
+  const cues =
+    /(Inc\.|LLC|Ltd\.|Head|Office|Mobile|Phone|www\.|http|@|CEO|CTO|Manager|Director)/i;
   return cues.test(tail) ? tail : null;
 }
 
@@ -130,15 +131,20 @@ export function extractSignatureBlock(text: string): string | null {
 // - Look for a line with org-like tokens (contains Inc., LLC, Ltd., or Title Case multi-word name without email/phone/URL)
 // - Skip lines that are clearly contact details (phone, email, url, address numbers)
 // - Return best candidate with a confidence score
-export function extractCompanyFromSignature(signature: string): { company?: string; confidence: number } {
+export function extractCompanyFromSignature(signature: string): {
+  company?: string;
+  confidence: number;
+} {
   if (!signature) return { confidence: 0 };
   const lines = signature
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
 
-  const skip = /(@|\b(?:tel|phone|mobile|email|www|http|fax|skype)\b|\d{3,}|\d+-\d+|\d+\s+\w+\s+\w+)/i;
-  const orgHints = /(Inc\.?|LLC|Ltd\.?|Company|Corporation|Corp\.?|GmbH|BV|SAS|SARL)/i;
+  const skip =
+    /(@|\b(?:tel|phone|mobile|email|www|http|fax|skype)\b|\d{3,}|\d+-\d+|\d+\s+\w+\s+\w+)/i;
+  const orgHints =
+    /(Inc\.?|LLC|Ltd\.?|Company|Corporation|Corp\.?|GmbH|BV|SAS|SARL)/i;
 
   const candidates: Array<{ text: string; score: number }> = [];
   for (const line of lines) {
@@ -151,14 +157,22 @@ export function extractCompanyFromSignature(signature: string): { company?: stri
     if (orgHints.test(line)) score += 2;
     // Title Case heuristic (e.g., "Acme Labs", "Blue Ocean Ventures")
     const words = line.split(/\s+/);
-    const titleCaseWords = words.filter((w) => /^(?:[A-Z][a-z]+|[A-Z]{2,})$/.test(w));
+    const titleCaseWords = words.filter((w) =>
+      /^(?:[A-Z][a-z]+|[A-Z]{2,})$/.test(w)
+    );
     if (titleCaseWords.length >= Math.min(2, words.length)) score += 1;
     // Not a personal full name (two words only) unless with org hints
     if (words.length >= 2 && words.length <= 5) score += 0.5;
     // Penalize if line looks like a job title
-    if (/\b(Engineer|Developer|Manager|Director|Lead|Consultant|Specialist|Head|Officer|VP|Chief)\b/i.test(line)) score -= 0.5;
+    if (
+      /\b(Engineer|Developer|Manager|Director|Lead|Consultant|Specialist|Head|Officer|VP|Chief)\b/i.test(
+        line
+      )
+    )
+      score -= 0.5;
 
-    if (score > 0) candidates.push({ text: line.replace(/[,.;]+$/g, ""), score });
+    if (score > 0)
+      candidates.push({ text: line.replace(/[,.;]+$/g, ""), score });
   }
 
   if (candidates.length === 0) return { confidence: 0 };

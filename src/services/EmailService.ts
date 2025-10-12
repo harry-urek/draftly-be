@@ -327,9 +327,13 @@ export class EmailService {
         const latestMsg = thread.messages[thread.messages.length - 1];
         if (latestMsg?.from) {
           try {
-            const { parseNameAndEmail, inferCompanyFromEmail, extractSignatureBlock, extractCompanyFromSignature, extractTextFromHtml } = await import(
-              "../utils/helpers.js"
-            );
+            const {
+              parseNameAndEmail,
+              inferCompanyFromEmail,
+              extractSignatureBlock,
+              extractCompanyFromSignature,
+              extractTextFromHtml,
+            } = await import("../utils/helpers.js");
             const parsed = parseNameAndEmail(latestMsg.from);
             if (parsed) {
               generationContext.senderName = parsed.name;
@@ -403,9 +407,13 @@ export class EmailService {
       const latestMsg = thread.messages[thread.messages.length - 1];
       if (latestMsg?.from) {
         try {
-          const { parseNameAndEmail, inferCompanyFromEmail, extractSignatureBlock, extractCompanyFromSignature, extractTextFromHtml } = await import(
-            "../utils/helpers.js"
-          );
+          const {
+            parseNameAndEmail,
+            inferCompanyFromEmail,
+            extractSignatureBlock,
+            extractCompanyFromSignature,
+            extractTextFromHtml,
+          } = await import("../utils/helpers.js");
           const parsed = parseNameAndEmail(latestMsg.from);
           if (parsed) {
             generationContext.senderName = parsed.name;
