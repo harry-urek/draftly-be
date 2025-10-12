@@ -1,7 +1,6 @@
 import { OAuth2Client } from "google-auth-library";
 import { google, gmail_v1 } from "googleapis";
 
-// eslint-disable-next-line import/no-unresolved
 import config from "../config/index";
 // eslint-disable-next-line import/no-unresolved
 import { AuthTokens, GmailMessage } from "../types/index.js";
