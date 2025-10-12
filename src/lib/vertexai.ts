@@ -8,6 +8,7 @@ import { VertexAI, SchemaType } from "@google-cloud/vertexai";
 // Internal types and utils
 import type { AIStyleProfile } from "../types";
 import { withAiRateLimit } from "./aiRateLimiter";
+import { withRetry } from "./aiRetry";
 
 // Initialize Vertex AI
 const vertex_ai = new VertexAI({
@@ -20,48 +21,6 @@ const generativeModel = vertex_ai.getGenerativeModel({
 });
 
 console.warn("[AI] Using Vertex AI");
-
-// --- Transient error handling helpers ---
-function sleep(ms: number) {
-  return new Promise((res) => setTimeout(res, ms));
-}
-
-function isTransientVertexError(err: unknown): boolean {
-  const msg = String((err as Error)?.message || err || "");
-  return /\b(429|RESOURCE_EXHAUSTED|Too Many Requests|UNAVAILABLE|retry)\b/i.test(
-    msg
-  );
-}
-
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  options?: { retries?: number; baseDelayMs?: number; maxDelayMs?: number }
-): Promise<T> {
-  const retries = options?.retries ?? 3;
-  const base = options?.baseDelayMs ?? 800;
-  const max = options?.maxDelayMs ?? 8000;
-  let attempt = 0;
-  while (true) {
-    try {
-      return await fn();
-    } catch (e) {
-      attempt++;
-      if (!isTransientVertexError(e) || attempt > retries) {
-        throw e;
-      }
-      const backoff = Math.min(
-        max,
-        Math.round(base * Math.pow(2, attempt - 1))
-      );
-      // jitter ±20%
-      const jitter = Math.round(backoff * (0.8 + Math.random() * 0.4));
-      console.warn(
-        `[AI] Transient Vertex error, retrying in ${jitter}ms (attempt ${attempt}/${retries})`
-      );
-      await sleep(jitter);
-    }
-  }
-}
 
 // Define the JSON schema for the AI style profile
 const STYLE_PROFILE_SCHEMA = {
@@ -276,8 +235,11 @@ export async function generateStyleProfile(
 ): Promise<Record<string, unknown>> {
   try {
     // Load the prompt template
-    const promptPath =
-      `${process.cwd()}${path.sep}prompts${path.sep}style-profile-generation.md` as const;
+    const promptPath = path.join(
+      process.cwd(),
+      "prompts",
+      "style-profile-generation.md"
+    );
     let promptTemplate = "";
     try {
       // eslint-disable-next-line security/detect-non-literal-fs-filename
@@ -400,13 +362,11 @@ export async function generatePersonaProfilePROSE(
   // Attempt to extract any explicit greeting preference from questionnaire to bias final synthesis
   const explicitGreetingPref = extractGreetingPreference(questionnaire);
 
-  const finalProfile = await synthesizeFinalProfile(
+  return await synthesizeFinalProfile(
     personaDescriptor,
     validatedTraits,
     explicitGreetingPref
   );
-
-  return finalProfile;
 }
 
 function extractScenarioResponses(questionnaire: unknown) {
@@ -502,9 +462,8 @@ async function generateCandidateReply(
   personaDescriptor: string,
   scenario: { id: string; prompt?: string; response: string }
 ) {
-  const scenarioContext = scenario.prompt
-    ? scenario.prompt
-    : `Write a reply for scenario ${scenario.id}.`;
+  const scenarioContext =
+    scenario.prompt || `Write a reply for scenario ${scenario.id}.`;
 
   const prompt = `Persona hypothesis:
 ${personaDescriptor}
@@ -693,7 +652,7 @@ Return strictly valid JSON conforming to the provided schema.`;
     maxOutputTokens: 1400,
     responseMimeType: "application/json",
     responseSchema: STYLE_PROFILE_SCHEMA,
-  } as const;
+  };
 
   const approxTokens = Math.round(prompt.length / 4);
   if (approxTokens > 6000) {

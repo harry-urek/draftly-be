@@ -447,9 +447,12 @@ export class EmailService {
         tone: generationContext.tone,
         createdAt: new Date().toISOString(),
       });
-    } catch {
-      // Cache-only path; swallow errors to avoid blocking UX
-      // Optionally log if needed
+    } catch (err) {
+      // Cache-only path; swallow errors to avoid blocking UX, but log for visibility
+      const msg = String((err as Error)?.message || err || "");
+      console.warn(
+        `[EmailService] generateAndCacheSuggestedReply failed for thread ${threadId}: ${msg}`
+      );
     }
   }
 

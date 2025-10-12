@@ -3,6 +3,7 @@ import { VertexAI, SchemaType } from "@google-cloud/vertexai";
 
 import config from "../config";
 import { withAiRateLimit } from "../lib/aiRateLimiter";
+import { withRetry } from "../lib/aiRetry";
 import { AIStyleProfile, EmailGenerationContext } from "../types";
 import { ExternalServiceError } from "../utils/errors";
 
@@ -12,38 +13,7 @@ type GenerativeAIModel = ReturnType<VertexAI["getGenerativeModel"]>;
 export class VertexAIIntegration {
   private vertex_ai: VertexAI;
   private generativeModel: GenerativeAIModel;
-  private asyncSleep(ms: number) {
-    return new Promise((r) => setTimeout(r, ms));
-  }
-  private isTransient(err: unknown): boolean {
-    const msg = String((err as Error)?.message || err || "");
-    return /(429|RESOURCE_EXHAUSTED|Too Many Requests|UNAVAILABLE)/i.test(msg);
-  }
-  private async retry<T>(
-    fn: () => Promise<T>,
-    retries = 3,
-    baseDelayMs = 700,
-    maxDelayMs = 8000
-  ): Promise<T> {
-    let attempt = 0;
-    while (true) {
-      try {
-        return await fn();
-      } catch (e) {
-        attempt++;
-        if (!this.isTransient(e) || attempt > retries) throw e;
-        const backoff = Math.min(
-          maxDelayMs,
-          Math.round(baseDelayMs * Math.pow(2, attempt - 1))
-        );
-        const jitter = Math.round(backoff * (0.8 + Math.random() * 0.4));
-        console.warn(
-          `[AI] Vertex retry in ${jitter}ms (attempt ${attempt}/${retries})`
-        );
-        await this.asyncSleep(jitter);
-      }
-    }
-  }
+  // retry logic is centralized in ../lib/aiRetry
 
   constructor() {
     this.vertex_ai = new VertexAI({
@@ -59,7 +29,7 @@ export class VertexAIIntegration {
   async testConnection(): Promise<boolean> {
     try {
       const testPrompt = "Say 'Hello' in one word.";
-      const result = await this.retry(() =>
+      const result = await withRetry(() =>
         withAiRateLimit(() =>
           this.generativeModel.generateContent({
             contents: [{ role: "user", parts: [{ text: testPrompt }] }],
@@ -101,7 +71,7 @@ export class VertexAIIntegration {
         );
       }
 
-      const result = await this.retry(
+      const result = await withRetry(
         () =>
           withAiRateLimit(() =>
             this.generativeModel.generateContent({
@@ -109,7 +79,7 @@ export class VertexAIIntegration {
               generationConfig,
             })
           ),
-        4
+        { retries: 4 }
       );
 
       const { response } = result;
@@ -149,7 +119,7 @@ export class VertexAIIntegration {
         );
       }
 
-      const result = await this.retry(
+      const result = await withRetry(
         () =>
           withAiRateLimit(() =>
             this.generativeModel.generateContent({
@@ -157,7 +127,7 @@ export class VertexAIIntegration {
               generationConfig,
             })
           ),
-        4
+        { retries: 4 }
       );
 
       const { response } = result;
