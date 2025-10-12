@@ -91,12 +91,14 @@ export class GmailIntegration {
       return { valid: true, refreshedTokens };
     } catch (error: unknown) {
       const code = (error as { code?: number })?.code;
-      if (code === 401 || code === 403) {
+      const msg = (error as Error)?.message || String(error);
+      // Treat common auth failures as invalid so callers can re-auth
+      if (code === 401 || code === 403 || /invalid[_ ]grant/i.test(msg)) {
         return { valid: false };
       }
       throw new ExternalServiceError(
         "Gmail",
-        `Token validation failed: ${(error as Error)?.message || String(error)}`
+        `Token validation failed: ${msg}`
       );
     }
   }
@@ -138,9 +140,10 @@ export class GmailIntegration {
 
       return detailedMessages;
     } catch (error) {
+      const msg = (error as Error)?.message || String(error);
       throw new ExternalServiceError(
         "Gmail",
-        `Failed to fetch messages: ${error}`
+        `Failed to fetch messages: ${msg}`
       );
     }
   }

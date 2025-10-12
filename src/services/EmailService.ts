@@ -202,15 +202,37 @@ export class EmailService {
           messages = await tryFetch(effectiveTokens);
         } catch (e: unknown) {
           const msg = String((e as Error)?.message || e);
-          const isAuthErr = /invalid authentication|unauthorized|401|403/i.test(
-            msg
-          );
+          const isInvalidGrant = /invalid[_ ]grant/i.test(msg);
+          const isAuthErr =
+            isInvalidGrant ||
+            /invalid authentication|unauthorized|401|403/i.test(msg);
           if (!isAuthErr) throw e;
 
-          // Validate and refresh tokens if possible
+          // If invalid_grant, tokens are revoked/expired; mark user to re-auth and short-circuit
+          if (isInvalidGrant) {
+            await this.userRepository.updateOnboardingStatus(
+              firebaseUid,
+              "GMAIL_CONNECTED"
+            );
+            return createSuccessResult({
+              synced: 0,
+              errors: 1,
+              errorDetails: [
+                {
+                  messageId: "-",
+                  error:
+                    "Gmail authorization expired (invalid_grant). Please re-connect Gmail.",
+                },
+              ],
+            });
+          }
+
+          // Otherwise try to validate and refresh tokens if possible
           const validation =
             await this.gmailIntegration.validateTokens(effectiveTokens);
-          if (!validation.valid) throw e;
+          if (!validation.valid) {
+            return createErrorResult("Gmail authentication required");
+          }
           if (validation.refreshedTokens?.accessToken) {
             effectiveTokens = validation.refreshedTokens;
             await this.userRepository.storeTokens(firebaseUid, effectiveTokens);
@@ -298,7 +320,39 @@ export class EmailService {
             context.threadHistory || thread.messages.map((m) => m.body),
           tone: context.tone,
           recipient: context.recipient,
+          recipientName: user.name,
         };
+
+        // Enrich with sender name/email/company when possible for the latest message
+        const latestMsg = thread.messages[thread.messages.length - 1];
+        if (latestMsg?.from) {
+          try {
+            const { parseNameAndEmail, inferCompanyFromEmail, extractSignatureBlock, extractCompanyFromSignature, extractTextFromHtml } = await import(
+              "../utils/helpers.js"
+            );
+            const parsed = parseNameAndEmail(latestMsg.from);
+            if (parsed) {
+              generationContext.senderName = parsed.name;
+              generationContext.senderEmail = parsed.email;
+              // Try to infer company from signature first, then fallback to domain
+              let company: string | undefined;
+              const bodyText = latestMsg.htmlBody
+                ? extractTextFromHtml(latestMsg.htmlBody)
+                : latestMsg.body;
+              const sig = bodyText ? extractSignatureBlock(bodyText) : null;
+              if (sig) {
+                const guess = extractCompanyFromSignature(sig);
+                if (guess.company && guess.confidence >= 0.5) {
+                  company = guess.company;
+                }
+              }
+              generationContext.senderCompany =
+                company || inferCompanyFromEmail(parsed.email);
+            }
+          } catch {
+            // non-fatal
+          }
+        }
 
         const draftContent = await this.vertexAIIntegration.generateEmailDraft(
           styleProfile as AIStyleProfile,
@@ -343,7 +397,37 @@ export class EmailService {
           opts?.threadHistory || thread.messages.map((m) => m.body),
         tone: opts?.tone,
         recipient: opts?.recipient,
+        recipientName: user.name,
       };
+
+      const latestMsg = thread.messages[thread.messages.length - 1];
+      if (latestMsg?.from) {
+        try {
+          const { parseNameAndEmail, inferCompanyFromEmail, extractSignatureBlock, extractCompanyFromSignature, extractTextFromHtml } = await import(
+            "../utils/helpers.js"
+          );
+          const parsed = parseNameAndEmail(latestMsg.from);
+          if (parsed) {
+            generationContext.senderName = parsed.name;
+            generationContext.senderEmail = parsed.email;
+            let company: string | undefined;
+            const bodyText = latestMsg.htmlBody
+              ? extractTextFromHtml(latestMsg.htmlBody)
+              : latestMsg.body;
+            const sig = bodyText ? extractSignatureBlock(bodyText) : null;
+            if (sig) {
+              const guess = extractCompanyFromSignature(sig);
+              if (guess.company && guess.confidence >= 0.5) {
+                company = guess.company;
+              }
+            }
+            generationContext.senderCompany =
+              company || inferCompanyFromEmail(parsed.email);
+          }
+        } catch {
+          // ignore
+        }
+      }
 
       const content = await this.vertexAIIntegration.generateEmailDraft(
         styleProfile as AIStyleProfile,

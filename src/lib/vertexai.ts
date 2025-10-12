@@ -1,6 +1,13 @@
+/* eslint-disable import/no-unresolved */
+/* eslint-disable import/order */
 import * as fs from "fs/promises";
 import * as path from "path";
+
 import { VertexAI, SchemaType } from "@google-cloud/vertexai";
+
+// Internal types and utils
+import type { AIStyleProfile } from "../types";
+import { withAiRateLimit } from "./aiRateLimiter";
 
 // Initialize Vertex AI
 const vertex_ai = new VertexAI({
@@ -12,7 +19,39 @@ const generativeModel = vertex_ai.getGenerativeModel({
   model: "gemini-2.0-flash-001",
 });
 
-console.log("[AI] Using Vertex AI");
+console.warn("[AI] Using Vertex AI");
+
+// --- Transient error handling helpers ---
+function sleep(ms: number) {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+function isTransientVertexError(err: unknown): boolean {
+  const msg = String((err as Error)?.message || err || "");
+  return /\b(429|RESOURCE_EXHAUSTED|Too Many Requests|UNAVAILABLE|retry)\b/i.test(msg);
+}
+
+async function withRetry<T>(fn: () => Promise<T>, options?: { retries?: number; baseDelayMs?: number; maxDelayMs?: number }): Promise<T> {
+  const retries = options?.retries ?? 3;
+  const base = options?.baseDelayMs ?? 800;
+  const max = options?.maxDelayMs ?? 8000;
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (e) {
+      attempt++;
+      if (!isTransientVertexError(e) || attempt > retries) {
+        throw e;
+      }
+      const backoff = Math.min(max, Math.round(base * Math.pow(2, attempt - 1)));
+      // jitter ±20%
+      const jitter = Math.round(backoff * (0.8 + Math.random() * 0.4));
+      console.warn(`[AI] Transient Vertex error, retrying in ${jitter}ms (attempt ${attempt}/${retries})`);
+      await sleep(jitter);
+    }
+  }
+}
 
 // Define the JSON schema for the AI style profile
 const STYLE_PROFILE_SCHEMA = {
@@ -223,16 +262,20 @@ const STYLE_PROFILE_SCHEMA = {
  * @returns AI-generated style profile
  */
 export async function generateStyleProfile(
-  questionnaireData: Record<string, any>
-): Promise<any> {
+  questionnaireData: Record<string, unknown>
+): Promise<Record<string, unknown>> {
   try {
     // Load the prompt template
-    const promptPath = path.join(
-      process.cwd(),
-      "prompts",
-      "style-profile-generation.md"
-    );
-    const promptTemplate = await fs.readFile(promptPath, "utf-8");
+    const promptPath =
+      `${process.cwd()}${path.sep}prompts${path.sep}style-profile-generation.md` as const;
+    let promptTemplate = "";
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      promptTemplate = await fs.readFile(promptPath, "utf-8");
+    } catch {
+      // Fallback minimal prompt if file is not present in runtime
+      promptTemplate = `Analyze the following questionnaire responses and generate a JSON style profile that matches the provided schema.\n\n{{USER_RESPONSES_JSON}}`;
+    }
 
     // Replace placeholder with actual data
     const userResponsesJson = JSON.stringify(questionnaireData, null, 2);
@@ -242,7 +285,7 @@ export async function generateStyleProfile(
     );
 
     // Use Vertex AI
-    console.log("[AI] Generating style profile with Vertex AI...");
+    console.warn("[AI] Generating style profile with Vertex AI...");
 
     // Configure generation with JSON schema enforcement
     const generationConfig = {
@@ -255,10 +298,14 @@ export async function generateStyleProfile(
     };
 
     // Generate content
-    const result = await generativeModel.generateContent({
+    const approxTokens = Math.round(finalPrompt.length / 4);
+    if (approxTokens > 6000) {
+      console.warn(`[AI] Large style profile prompt (~${approxTokens} tokens). Consider trimming questionnaire data.`);
+    }
+    const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
       contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
       generationConfig,
-    });
+    })), { retries: 4, baseDelayMs: 700, maxDelayMs: 9000 });
 
     const response = result.response;
     const candidate = response.candidates?.[0];
@@ -266,7 +313,7 @@ export async function generateStyleProfile(
     const part = content?.parts?.[0];
     const profileJson = part?.text || "{}";
 
-    console.log("[AI] Style profile generated successfully (Vertex AI)");
+    console.warn("[AI] Style profile generated successfully (Vertex AI)");
 
     // Parse and return
     return JSON.parse(profileJson);
@@ -274,6 +321,367 @@ export async function generateStyleProfile(
     console.error("[AI] Failed to generate style profile:", error);
     throw new Error("Failed to generate style profile");
   }
+}
+
+/**
+ * PROSE-inspired persona generation pipeline
+ * Implements:
+ * 1) Initial stylometric analysis over scenario responses to create a hypothesis
+ * 2) Iterative refinement per scenario: generate -> compare -> refine (2 loops)
+ * 3) Consistency verification across scenarios
+ * 4) Final synthesis into STYLE_PROFILE_SCHEMA
+ */
+export async function generatePersonaProfilePROSE(
+  questionnaire: unknown
+): Promise<AIStyleProfile> {
+  // Extract scenario responses regardless of payload shape
+  const scenarios: Array<{
+    id: string;
+    prompt?: string;
+    response: string;
+  }> = extractScenarioResponses(questionnaire) as Array<{
+    id: string;
+    prompt?: string;
+    response: string;
+  }>;
+
+  if (!scenarios.length) {
+    throw new Error("No scenario responses provided");
+  }
+
+  // Step 1: Initial stylometry
+  const initialHypothesis = await runStylometryHypothesis(scenarios);
+
+  // Step 2: PROSE refinement loops (2 iterations per scenario)
+  const refinedTraitsPerScenario: Record<string, string[]> = {};
+  let personaDescriptor = initialHypothesis.summary || "";
+
+  // Allow tuning iterations to reduce API pressure during load
+  const loops = Math.max(1, Number(process.env.PROSE_ITERATIONS ?? 2));
+  for (const s of scenarios) {
+    const traitsAccum: string[] = [];
+    let workingPersona = personaDescriptor;
+    for (let i = 0; i < loops; i++) {
+      const candidate = await generateCandidateReply(workingPersona, s);
+      const deltas = await compareAndExtractDeltas(s.response, candidate);
+      const refined = await refinePersonaDescriptor(workingPersona, deltas);
+      workingPersona = refined.updatedPersona;
+      traitsAccum.push(...refined.keyTraits);
+    }
+    refinedTraitsPerScenario[s.id] = dedupe(traitsAccum);
+    personaDescriptor = workingPersona; // fold-in refinements across scenarios
+  }
+
+  // Step 3: Consistency verification across scenarios
+  const validatedTraits = await verifyConsistencyAcrossScenarios(
+    refinedTraitsPerScenario,
+    scenarios
+  );
+
+  // Step 4: Final synthesis mapped into STYLE_PROFILE_SCHEMA
+  // Attempt to extract any explicit greeting preference from questionnaire to bias final synthesis
+  const explicitGreetingPref = extractGreetingPreference(questionnaire);
+
+  const finalProfile = await synthesizeFinalProfile(
+    personaDescriptor,
+    validatedTraits,
+    explicitGreetingPref
+  );
+
+  return finalProfile;
+}
+
+function extractScenarioResponses(questionnaire: unknown) {
+  const q = questionnaire as Record<string, unknown> | undefined;
+  // Support both old and new payloads
+  // New format: { profession, foundational, scenarios: [{ id, prompt, response }] }
+  const scenariosAny = (q as Record<string, unknown> | undefined)
+    ?.scenarios as unknown;
+  if (Array.isArray(scenariosAny)) {
+    return scenariosAny
+      .map(
+        (s: {
+          id?: string;
+          scenarioId?: string;
+          prompt?: string;
+          response?: string;
+          responseText?: string;
+        }) => ({
+          id: s.id || s.scenarioId || "scenario",
+          prompt: s.prompt,
+          response: s.response || s.responseText,
+        })
+      )
+      .filter((s: { response?: string }) => !!s.response);
+  }
+  // Old format: { scenarioResponses: [{ scenarioId, responseText }] }
+  const legacy = (q as Record<string, unknown> | undefined)
+    ?.scenarioResponses as unknown;
+  if (Array.isArray(legacy)) {
+    return legacy
+      .map((s: { scenarioId: string; responseText: string }) => ({
+        id: s.scenarioId,
+        response: s.responseText,
+      }))
+      .filter((s: { response?: string }) => !!s.response);
+  }
+  return [] as Array<{ id: string; prompt?: string; response: string }>;
+}
+
+async function runStylometryHypothesis(
+  scenarios: Array<{ id: string; response: string }>
+) {
+  const joined = scenarios
+    .map((s) => `Scenario ${s.id} Response:\n${s.response}`)
+    .join("\n\n---\n\n");
+
+  const prompt = `You are a computational stylistics analyst.
+Analyze the user's writing samples below and extract quantifiable stylistic features and a short hypothesis summary of their persona.
+
+Return JSON with fields:
+- features: {
+  avgSentenceLength: number,
+  typeTokenRatio: number,
+  punctuationPatterns: string[],
+  functionWords: string[],
+  sentenceComplexity: "Simple"|"Moderate"|"Complex",
+  vocabularyRichness: "Low"|"Medium"|"High"
+}
+- summary: string  // 2-3 sentences capturing tone, directness, and structure
+
+SAMPLES:
+${joined}`.trim();
+
+  const approxTokens = Math.round(prompt.length / 4);
+  if (approxTokens > 6000) {
+    console.warn(`[AI] Large stylometry prompt (~${approxTokens} tokens).`);
+  }
+  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 512,
+      responseMimeType: "application/json",
+    },
+  })), { retries: 4 });
+  const text =
+    result.response.candidates?.[0]?.content?.parts?.[0]?.text ||
+    '{"features":{},"summary":""}';
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { features: {}, summary: String(text).slice(0, 500) };
+  }
+}
+
+async function generateCandidateReply(
+  personaDescriptor: string,
+  scenario: { id: string; prompt?: string; response: string }
+) {
+  const scenarioContext = scenario.prompt
+    ? scenario.prompt
+    : `Write a reply for scenario ${scenario.id}.`;
+
+  const prompt = `Persona hypothesis:
+${personaDescriptor}
+
+Scenario:
+${scenarioContext}
+
+Write a reply in one continuous block, no commentary.`;
+
+  const approxTokens = Math.round(prompt.length / 4);
+  if (approxTokens > 6000) {
+    console.warn(`[AI] Large candidate reply prompt (~${approxTokens} tokens).`);
+  }
+  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.4, maxOutputTokens: 400 },
+  })), { retries: 4 });
+  return result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+async function compareAndExtractDeltas(userText: string, modelText: string) {
+  const prompt = `Act as a linguistic analyst.
+Compare USER vs MODEL replies and list concrete deltas in tone, formality, word choice, structure, and intent.
+Return a JSON object with fields: keyTraits (string[]), notes (string[]).
+
+USER:
+${userText}
+
+MODEL:
+${modelText}`;
+
+  const approxTokens = Math.round(prompt.length / 4);
+  if (approxTokens > 6000) {
+    console.warn(`[AI] Large compare prompt (~${approxTokens} tokens).`);
+  }
+  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 400,
+      responseMimeType: "application/json",
+    },
+  })), { retries: 4 });
+  const text =
+    result.response.candidates?.[0]?.content?.parts?.[0]?.text ||
+    '{"keyTraits":[],"notes":[]}';
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { keyTraits: [], notes: [String(text)] } as {
+      keyTraits: string[];
+      notes: string[];
+    };
+  }
+}
+
+async function refinePersonaDescriptor(
+  currentPersona: string,
+  deltas: { keyTraits: string[]; notes: string[] }
+) {
+  const prompt = `Current persona hypothesis:
+${currentPersona}
+
+Observed deltas to incorporate:
+${JSON.stringify(deltas.keyTraits, null, 2)}
+
+Update and tighten the persona description (3-5 bullet points). Return JSON with fields:
+- updatedPersona: string // concise paragraph description
+- keyTraits: string[] // distilled traits included`;
+
+  const approxTokens = Math.round(prompt.length / 4);
+  if (approxTokens > 6000) {
+    console.warn(`[AI] Large refine prompt (~${approxTokens} tokens).`);
+  }
+  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 400,
+      responseMimeType: "application/json",
+    },
+  })), { retries: 4 });
+  const text =
+    result.response.candidates?.[0]?.content?.parts?.[0]?.text ||
+    '{"updatedPersona":"","keyTraits":[]}';
+  try {
+    return JSON.parse(text) as { updatedPersona: string; keyTraits: string[] };
+  } catch {
+    return { updatedPersona: currentPersona, keyTraits: deltas.keyTraits };
+  }
+}
+
+async function verifyConsistencyAcrossScenarios(
+  traitsPerScenario: Record<string, string[]>,
+  scenarios: Array<{ id: string; response: string }>
+) {
+  // Flatten and count traits
+  const counts = new Map<string, number>();
+  Object.values(traitsPerScenario).forEach((arr) => {
+    for (const t of arr) counts.set(t, (counts.get(t) || 0) + 1);
+  });
+  const consistent = [...counts.entries()]
+    .filter(([_, c]) => c >= Math.min(2, scenarios.length))
+    .map(([t]) => t);
+
+  // Let model double-check and tag context-dependent traits
+  const prompt = `Given these candidate traits extracted from multiple samples:
+${JSON.stringify(consistent, null, 2)}
+
+Validate which are universal vs context-dependent across the user's three scenario responses. Return JSON:
+{ "universal": string[], "contextual": string[] }`;
+
+  const approxTokens = Math.round(prompt.length / 4);
+  if (approxTokens > 6000) {
+    console.warn(`[AI] Large consistency prompt (~${approxTokens} tokens).`);
+  }
+  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 300,
+      responseMimeType: "application/json",
+    },
+  })), { retries: 4 });
+  const text =
+    result.response.candidates?.[0]?.content?.parts?.[0]?.text ||
+    '{"universal":[],"contextual":[]}';
+  try {
+    return JSON.parse(text) as { universal: string[]; contextual: string[] };
+  } catch {
+    return { universal: consistent, contextual: [] };
+  }
+}
+
+async function synthesizeFinalProfile(
+  personaDescriptor: string,
+  validated: { universal: string[]; contextual: string[] },
+  greetingPref?: string
+) {
+  const prompt = `Synthesize a complete email writing style profile matching the JSON schema fields below. 
+Use this persona descriptor and universal traits as authoritative, and consider contextual traits as optional variations.
+
+Persona descriptor:
+${personaDescriptor}
+
+Universal traits:
+${JSON.stringify(validated.universal, null, 2)}
+
+Contextual traits (lower weight):
+${JSON.stringify(validated.contextual, null, 2)}
+
+${greetingPref ? `User's explicit preferred greeting style (seed this into structuralPreferences.greetingStyle lists appropriately): ${greetingPref}` : ''}
+
+Return strictly valid JSON conforming to the provided schema.`;
+
+  const generationConfig = {
+    temperature: 0.25,
+    topP: 0.8,
+    topK: 40,
+    maxOutputTokens: 1400,
+    responseMimeType: "application/json",
+    responseSchema: STYLE_PROFILE_SCHEMA,
+  } as const;
+
+  const approxTokens = Math.round(prompt.length / 4);
+  if (approxTokens > 6000) {
+    console.warn(`[AI] Large final synthesis prompt (~${approxTokens} tokens).`);
+  }
+  const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig,
+  })), { retries: 5, baseDelayMs: 900 });
+  const text =
+    result.response.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+  try {
+    return JSON.parse(text);
+  } catch {
+    console.warn(
+      "[AI] Final synthesis JSON parse failed, returning empty profile"
+    );
+    return {} as AIStyleProfile;
+  }
+}
+
+function dedupe(arr: string[]) {
+  return Array.from(new Set(arr.filter(Boolean).map((s) => s.trim())));
+}
+
+function extractGreetingPreference(questionnaire: unknown): string | undefined {
+  try {
+    const q = questionnaire as Record<string, unknown>;
+    // Support shapes like { foundational: { greetingPreference: 'Hi {FirstName}' } }
+    const foundational = (q?.["foundational"] as Record<string, unknown> | undefined) ?? undefined;
+    const fgp = foundational?.["greetingPreference"] as unknown;
+    const topLevel = q?.["greetingPreference"] as unknown;
+    const gp = (typeof fgp === 'string' ? fgp : typeof topLevel === 'string' ? topLevel : undefined) as string | undefined;
+    if (gp && gp.length > 0) return gp;
+  } catch {
+    // ignore
+  }
+  return undefined;
 }
 
 /**
@@ -285,17 +693,30 @@ export async function generateStyleProfile(
  * @returns Generated email draft
  */
 export async function generateEmailDraft(
-  styleProfile: any,
+  styleProfile: AIStyleProfile,
   emailContext: {
     originalEmail: string;
     threadHistory?: string[];
     tone?: string;
+    // New optional contextual enrichments
+    senderName?: string;
+    senderEmail?: string;
+    senderCompany?: string;
+    recipientName?: string; // the user's own name can be passed to personalize greeting
   },
   userPreferences?: {
     signature?: string;
   }
 ): Promise<string> {
   try {
+    // Trim overly long inputs to avoid excessive tokens
+    const clamp = (s: string, max = 4000) => (s.length > max ? s.slice(0, max) + "…" : s);
+    const safeOriginal = clamp(emailContext.originalEmail, 4000);
+    const history = emailContext.threadHistory ?? [];
+    const safeHistory = history
+      .slice(Math.max(0, history.length - 3)) // last 3 items
+      .map((h) => clamp(h, 1500));
+
     const prompt = `
 You are an AI email assistant that writes emails in the exact style of a specific user.
 
@@ -303,12 +724,16 @@ You are an AI email assistant that writes emails in the exact style of a specifi
 ${JSON.stringify(styleProfile, null, 2)}
 
 **EMAIL CONTEXT:**
-Original Email: ${emailContext.originalEmail}
+Original Email: ${safeOriginal}
 ${
-  emailContext.threadHistory
-    ? `Thread History: ${emailContext.threadHistory.join("\n---\n")}`
+  safeHistory.length
+    ? `Thread History: ${safeHistory.join("\n---\n")}`
     : ""
 }
+${emailContext.senderName ? `Sender Name: ${emailContext.senderName}` : ""}
+${emailContext.senderEmail ? `Sender Email: ${emailContext.senderEmail}` : ""}
+${emailContext.senderCompany ? `Sender Company/Firm: ${emailContext.senderCompany}` : ""}
+${emailContext.recipientName ? `User's Name (reply author): ${emailContext.recipientName}` : ""}
 
 **INSTRUCTIONS:**
 - Write a reply to the original email
@@ -326,6 +751,10 @@ ${
         : ""
     }
 - Preserve proper email threading and context
+ - Personalize the greeting and body using the sender name and company when available (e.g., "Hi Sarah" or referencing "Acme" where natural). Avoid fabricating details.
+- If senderName is available, begin with an appropriate greeting using their name (e.g., "Hi Sarah,").
+- If recipientName (user's name) or a signature is available, include a natural sign-off that uses it. Do not fabricate a name if none is provided.
+- Do not use placeholders like [Name] or [Company]; omit if unknown.
 
 Generate the email draft now:
     `.trim();
@@ -338,12 +767,16 @@ Generate the email draft now:
     };
 
     // Use Vertex AI
-    console.log("[AI] Generating email draft with Vertex AI...");
+    console.warn("[AI] Generating email draft with Vertex AI...");
 
-    const result = await generativeModel.generateContent({
+    const approxTokens = Math.round(prompt.length / 4);
+    if (approxTokens > 6000) {
+      console.warn(`[AI] Large email draft prompt (~${approxTokens} tokens). Consider trimming history.`);
+    }
+    const result = await withRetry(() => withAiRateLimit(() => generativeModel.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig,
-    });
+    })), { retries: 4, baseDelayMs: 700 });
 
     const response = result.response;
     const candidate = response.candidates?.[0];
@@ -351,7 +784,7 @@ Generate the email draft now:
     const part = content?.parts?.[0];
     const draft = part?.text || "";
 
-    console.log("[AI] Email draft generated successfully (Vertex AI)");
+    console.warn("[AI] Email draft generated successfully (Vertex AI)");
     return draft;
   } catch (error) {
     console.error("[AI] Failed to generate email draft:", error);
@@ -371,7 +804,7 @@ export async function testVertexAIConnection(): Promise<{
 }> {
   try {
     // Test Vertex AI
-    console.log("[AI] Testing Vertex AI connection...");
+    console.warn("[AI] Testing Vertex AI connection...");
 
     const projectId = process.env.VERTEX_AI_PROJECT_ID || "draftly-4572a";
     const location = process.env.VERTEX_AI_LOCATION || "us-central1";
@@ -417,30 +850,31 @@ export async function testVertexAIConnection(): Promise<{
       };
     }
 
-    console.log("[AI] ✓ Vertex AI connection successful");
-    console.log(`[AI] Project: ${projectId}`);
-    console.log(`[AI] Location: ${location}`);
-    console.log(`[AI] Model: gemini-2.0-flash-001`);
+    console.warn("[AI] ✓ Vertex AI connection successful");
+    console.warn(`[AI] Project: ${projectId}`);
+    console.warn(`[AI] Location: ${location}`);
+    console.warn(`[AI] Model: gemini-2.0-flash-001`);
 
     return { connected: true, provider: "Vertex AI" };
-  } catch (error: any) {
-    console.error("[AI] Vertex AI connection test failed:", error.message);
+  } catch (error: unknown) {
+    const message = (error as Error)?.message || String(error);
+    console.error("[AI] Vertex AI connection test failed:", message);
 
     // Provide helpful error messages
     let errorMessage = "Unknown error";
 
-    if (error.message?.includes("403")) {
+    if (message?.includes?.("403")) {
       errorMessage =
         "Permission denied. Check service account has 'Vertex AI User' role or enable billing";
-    } else if (error.message?.includes("404")) {
+    } else if (message?.includes?.("404")) {
       errorMessage = "API not found. Check project ID and location";
-    } else if (error.message?.includes("PERMISSION_DENIED")) {
+    } else if (message?.includes?.("PERMISSION_DENIED")) {
       errorMessage =
         "API not enabled or lacks permissions. Visit: https://console.developers.google.com/apis/api/aiplatform.googleapis.com";
-    } else if (error.code === "ENOENT") {
+    } else if ((error as unknown as { code?: string })?.code === "ENOENT") {
       errorMessage = "Credentials file not found";
     } else {
-      errorMessage = error.message;
+      errorMessage = message;
     }
 
     return {

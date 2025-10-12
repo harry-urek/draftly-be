@@ -1,5 +1,4 @@
 /* eslint-disable import/no-unresolved */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { FastifyRequest, FastifyReply } from "fastify";
 
 import {
@@ -7,7 +6,10 @@ import {
   cacheUserEmailsForOnboarding,
 } from "../lib/onboarding-emails";
 import { prisma } from "../lib/prisma";
-import { generateStyleProfile } from "../lib/vertexai";
+import {
+  generatePersonaProfilePROSE,
+  generateStyleProfile,
+} from "../lib/vertexai";
 import { OnboardingStatus, AIStyleProfile } from "../types";
 
 export class OnboardingController {
@@ -113,7 +115,7 @@ export class OnboardingController {
       }
 
       const { firebaseUid } = request.firebaseUser;
-      const questionnaireData = request.body as QuestionnaireResponses;
+      const questionnaireData = request.body as unknown;
 
       if (!questionnaireData || Object.keys(questionnaireData).length === 0) {
         reply.code(400).send({ error: "Questionnaire data is required" });
@@ -140,10 +142,20 @@ export class OnboardingController {
             },
           });
 
-          // Generate profile using Vertex AI
-          const styleProfile = (await generateStyleProfile(
-            questionnaireData as unknown as Record<string, any>
-          )) as AIStyleProfile;
+          // Prefer PROSE pipeline; fallback to simple generator on failure
+          let styleProfile: AIStyleProfile;
+          try {
+            styleProfile = await generatePersonaProfilePROSE(questionnaireData);
+          } catch (pfErr) {
+            request.log?.warn(
+              { err: pfErr },
+              "[Onboarding] PROSE pipeline failed, falling back to simple profile generation"
+            );
+            const simple = await generateStyleProfile(
+              questionnaireData as Record<string, unknown>
+            );
+            styleProfile = simple as unknown as AIStyleProfile;
+          }
 
           // Store profile and set ACTIVE
           await prisma.user.update({
@@ -178,25 +190,4 @@ export class OnboardingController {
   }
 }
 
-// TypeScript types aligned with routes/onboarding schema
-interface QuestionnaireResponses {
-  userId: string;
-  submissionTimestamp: string;
-  stylePreferences: {
-    greeting: string;
-    formalityScale: number;
-    requestStyle: string;
-    emojiFrequency: string;
-  };
-  scenarioResponses: Array<{
-    scenarioId: string;
-    responseText: string;
-  }>;
-  stylisticNuances: {
-    commonSignOffs: string[];
-    commonPhrases: string[];
-    petPeeve: string;
-    writingTone?: string[];
-    punctuationStyle?: string;
-  };
-}
+// No local interface, we accept flexible questionnaire payloads to support new protocol
