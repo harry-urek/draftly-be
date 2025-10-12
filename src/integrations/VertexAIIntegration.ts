@@ -1,6 +1,9 @@
+/* eslint-disable import/no-unresolved */
 import { VertexAI, SchemaType } from "@google-cloud/vertexai";
 
 import config from "../config";
+import { withAiRateLimit } from "../lib/aiRateLimiter";
+import { withRetry } from "../lib/aiRetry";
 import { AIStyleProfile, EmailGenerationContext } from "../types";
 import { ExternalServiceError } from "../utils/errors";
 
@@ -10,6 +13,7 @@ type GenerativeAIModel = ReturnType<VertexAI["getGenerativeModel"]>;
 export class VertexAIIntegration {
   private vertex_ai: VertexAI;
   private generativeModel: GenerativeAIModel;
+  // retry logic is centralized in ../lib/aiRetry
 
   constructor() {
     this.vertex_ai = new VertexAI({
@@ -25,13 +29,17 @@ export class VertexAIIntegration {
   async testConnection(): Promise<boolean> {
     try {
       const testPrompt = "Say 'Hello' in one word.";
-      const result = await this.generativeModel.generateContent({
-        contents: [{ role: "user", parts: [{ text: testPrompt }] }],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 10,
-        },
-      });
+      const result = await withRetry(() =>
+        withAiRateLimit(() =>
+          this.generativeModel.generateContent({
+            contents: [{ role: "user", parts: [{ text: testPrompt }] }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 10,
+            },
+          })
+        )
+      );
 
       return !!result.response;
     } catch (error) {
@@ -55,10 +63,24 @@ export class VertexAIIntegration {
         responseSchema: this.getStyleProfileSchema(),
       };
 
-      const result = await this.generativeModel.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig,
-      });
+      // lightweight token estimate (chars/4 ≈ tokens); log if too large
+      const approxTokens = Math.round(prompt.length / 4);
+      if (approxTokens > 6000) {
+        console.warn(
+          `[AI] Large prompt for style profile (~${approxTokens} tokens). Consider trimming questionnaire input.`
+        );
+      }
+
+      const result = await withRetry(
+        () =>
+          withAiRateLimit(() =>
+            this.generativeModel.generateContent({
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              generationConfig,
+            })
+          ),
+        { retries: 4 }
+      );
 
       const { response } = result;
       const candidate = response.candidates?.[0];
@@ -89,10 +111,24 @@ export class VertexAIIntegration {
         maxOutputTokens: 1024,
       };
 
-      const result = await this.generativeModel.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig,
-      });
+      // lightweight token estimate for email draft prompt
+      const approxTokens = Math.round(prompt.length / 4);
+      if (approxTokens > 6000) {
+        console.warn(
+          `[AI] Large draft prompt (~${approxTokens} tokens). Trimming thread history.`
+        );
+      }
+
+      const result = await withRetry(
+        () =>
+          withAiRateLimit(() =>
+            this.generativeModel.generateContent({
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              generationConfig,
+            })
+          ),
+        { retries: 4 }
+      );
 
       const { response } = result;
       const candidate = response.candidates?.[0];
@@ -152,6 +188,10 @@ ${
     ? `Recipient: ${context.recipient.name} (${context.recipient.email}) - ${context.recipient.relationship}`
     : ""
 }
+${context.senderName ? `Sender Name: ${context.senderName}` : ""}
+${context.senderEmail ? `Sender Email: ${context.senderEmail}` : ""}
+${context.senderCompany ? `Sender Company/Firm: ${context.senderCompany}` : ""}
+${context.recipientName ? `User's Name (reply author): ${context.recipientName}` : ""}
 
 **INSTRUCTIONS:**
 - Write a reply to the original email
@@ -160,6 +200,9 @@ ${
 - Maintain their typical sentence complexity and vocabulary level
 - Adapt formality based on recipient relationship if specified
 - Preserve proper email threading and context
+- If senderName is available, begin with an appropriate greeting using their name (e.g., "Hi Sarah,").
+- If User's Name or a signature is available, include a natural sign-off that uses it. Do not fabricate a name if none is provided.
+- Personalize the body referencing the sender company when natural; avoid placeholders like [Name] or [Company]. Omit unknown details.
 
 Generate the email draft now:
     `.trim();

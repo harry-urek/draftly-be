@@ -1,7 +1,8 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { AuthService } from "../services/AuthService";
-import { requireAuth } from "../middleware/auth";
+
 import config from "../config/index";
+import { requireAuth } from "../middleware/auth";
+import { AuthService } from "../services/AuthService";
 
 interface AuthController {
   registerRoutes(fastify: FastifyInstance): void;
@@ -31,6 +32,8 @@ export class AuthControllerImpl implements AuthController {
             user: userProfile,
             needsGmailAuth,
             needsOnboarding,
+            redirectToInbox,
+            onboardingStatus,
           } = result.data!;
 
           const status =
@@ -44,7 +47,8 @@ export class AuthControllerImpl implements AuthController {
             status,
             needsGmailAuth,
             needsOnboarding,
-            onboardingStatus: userProfile.onboardingStatus,
+            onboardingStatus,
+            redirectToInbox,
           });
         } catch (error) {
           console.error("Registration/Login error:", error);
@@ -107,6 +111,7 @@ export class AuthControllerImpl implements AuthController {
             user: profile,
             hasValidGmailAuth,
             needsOnboarding,
+            redirectToInbox,
           } = result.data!;
 
           return reply.send({
@@ -116,6 +121,7 @@ export class AuthControllerImpl implements AuthController {
             needsGmailAuth: !hasValidGmailAuth,
             needsOnboarding,
             onboardingStatus: profile.onboardingStatus,
+            redirectToInbox,
             user: {
               id: profile.firebaseUid,
               email: profile.email,

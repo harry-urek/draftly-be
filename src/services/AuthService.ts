@@ -1,4 +1,6 @@
+/* eslint-disable import/no-unresolved */
 import { GmailIntegration } from "../integrations/GmailIntegration";
+import { CacheManager } from "../lib/cache";
 import { UserRepository } from "../repositories/UserRepository";
 import { User, FirebaseUser } from "../types";
 import {
@@ -18,6 +20,8 @@ export class AuthService {
       user: User;
       needsGmailAuth: boolean;
       needsOnboarding: boolean;
+      onboardingStatus: User["onboardingStatus"];
+      redirectToInbox: boolean;
     }>
   > {
     try {
@@ -48,37 +52,23 @@ export class AuthService {
       const tokens = await this.userRepository.getTokens(
         firebaseUser.firebaseUid
       );
-      // Treat presence of an access token as potentially valid; refresh token is optional
-      const hasAccessToken = Boolean(tokens?.accessToken);
 
-      let needsGmailAuth = true;
-      if (hasAccessToken) {
-        // Validate by hitting Gmail API; if it works, we don't need Gmail auth
-        const safeTokens = {
-          accessToken: tokens?.accessToken,
-          refreshToken: tokens?.refreshToken,
-        };
-        const validation =
-          await this.gmailIntegration.validateTokens(safeTokens);
-        needsGmailAuth = !validation.valid;
-
-        if (validation.refreshedTokens?.accessToken && validation.valid) {
-          await this.userRepository.storeTokens(
-            firebaseUser.firebaseUid,
-            validation.refreshedTokens
-          );
-        }
-      }
+      const needsGmailAuth = !tokens?.accessToken && !tokens?.refreshToken;
 
       // Check onboarding status
       const needsOnboarding =
         user.onboardingStatus === "NOT_STARTED" ||
         user.onboardingStatus === "GMAIL_CONNECTED";
 
+      const redirectToInbox =
+        user.onboardingStatus === "COMPLETED_INIT_PROFILE";
+
       return createSuccessResult({
         user,
         needsGmailAuth,
         needsOnboarding,
+        onboardingStatus: user.onboardingStatus,
+        redirectToInbox,
       });
     } catch (error) {
       return handleServiceError(error);
@@ -90,6 +80,7 @@ export class AuthService {
       user: User;
       hasValidGmailAuth: boolean;
       needsOnboarding: boolean;
+      redirectToInbox: boolean;
     }>
   > {
     try {
@@ -100,35 +91,23 @@ export class AuthService {
 
       // Check Gmail tokens
       const tokens = await this.userRepository.getTokens(firebaseUid);
-      // Access token alone is acceptable; validate when present
-      const hasAccessToken = Boolean(tokens?.accessToken);
 
-      let hasValidGmailAuth = false;
-      if (hasAccessToken) {
-        const safeTokens = {
-          accessToken: tokens?.accessToken,
-          refreshToken: tokens?.refreshToken,
-        };
-        const validation =
-          await this.gmailIntegration.validateTokens(safeTokens);
-        hasValidGmailAuth = validation.valid;
-
-        if (validation.refreshedTokens?.accessToken && validation.valid) {
-          await this.userRepository.storeTokens(
-            firebaseUid,
-            validation.refreshedTokens
-          );
-        }
-      }
+      const hasValidGmailAuth = Boolean(
+        tokens?.accessToken || tokens?.refreshToken
+      );
 
       const needsOnboarding =
         user.onboardingStatus === "NOT_STARTED" ||
         user.onboardingStatus === "GMAIL_CONNECTED";
 
+      const redirectToInbox =
+        user.onboardingStatus === "COMPLETED_INIT_PROFILE";
+
       return createSuccessResult({
         user,
         hasValidGmailAuth,
         needsOnboarding,
+        redirectToInbox,
       });
     } catch (error) {
       return handleServiceError(error);
@@ -164,9 +143,13 @@ export class AuthService {
 
   async logout(firebaseUid: string): Promise<ServiceResult<void>> {
     try {
+      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
+      if (!user) {
+        return { success: false, error: "User not found" };
+      }
+
       await this.userRepository.setOffline(firebaseUid);
-      await this.userRepository.clearTokens(firebaseUid);
-      await this.userRepository.purgeUserData(firebaseUid);
+      await CacheManager.clearUserCache(user.id);
       return createSuccessResult(undefined);
     } catch (error) {
       return handleServiceError(error);

@@ -28,8 +28,9 @@ export class GmailIntegration {
         "https://www.googleapis.com/auth/userinfo.profile",
       ],
       include_granted_scopes: true,
-      // Avoid forcing consent every time; Google will reuse prior approval
-      // prompt: "consent", // removed to prevent repeated permission prompts
+      // Force consent to ensure a refresh_token is returned reliably.
+      // Without this, some users may never receive a refresh token and will lose access when the access token expires.
+      prompt: "consent",
     });
   }
 
@@ -90,12 +91,14 @@ export class GmailIntegration {
       return { valid: true, refreshedTokens };
     } catch (error: unknown) {
       const code = (error as { code?: number })?.code;
-      if (code === 401 || code === 403) {
+      const msg = (error as Error)?.message || String(error);
+      // Treat common auth failures as invalid so callers can re-auth
+      if (code === 401 || code === 403 || /invalid[_ ]grant/i.test(msg)) {
         return { valid: false };
       }
       throw new ExternalServiceError(
         "Gmail",
-        `Token validation failed: ${(error as Error)?.message || String(error)}`
+        `Token validation failed: ${msg}`
       );
     }
   }
@@ -137,9 +140,10 @@ export class GmailIntegration {
 
       return detailedMessages;
     } catch (error) {
+      const msg = (error as Error)?.message || String(error);
       throw new ExternalServiceError(
         "Gmail",
-        `Failed to fetch messages: ${error}`
+        `Failed to fetch messages: ${msg}`
       );
     }
   }

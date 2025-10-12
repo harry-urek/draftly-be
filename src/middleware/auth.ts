@@ -66,6 +66,21 @@ export async function authMiddleware(
       email: decodedToken.email || userRecord.email || "",
     };
 
+    // Ensure a corresponding User record exists before updating presence
+    try {
+      const existing = await userRepository.findByFirebaseUid(decodedToken.uid);
+      if (!existing) {
+        await userRepository.create({
+          firebaseUid: decodedToken.uid,
+          email: decodedToken.email || userRecord.email || "",
+          name: decodedToken.name || userRecord.displayName || undefined,
+          picture: decodedToken.picture || userRecord.photoURL || undefined,
+        });
+      }
+    } catch (e) {
+      request.log?.warn({ err: e }, "Failed to ensure user record exists");
+    }
+
     // Update presence so background sync can see online users
     try {
       await setUserOnline(decodedToken.uid);
@@ -118,7 +133,7 @@ export async function requireGmailAuth(
     // Check if user has valid Gmail credentials
     const tokens = await userRepository.getTokens(user.firebaseUid);
 
-    if (!tokens || !tokens.accessToken) {
+    if (!tokens || (!tokens.accessToken && !tokens.refreshToken)) {
       return reply.status(403).send({
         error: "Gmail authentication required",
         requiresAuth: "gmail",

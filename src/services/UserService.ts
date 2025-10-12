@@ -59,8 +59,11 @@ export class UserService {
       // Store the profile and questionnaire data
       await this.userRepository.storeStyleProfile(firebaseUid, styleProfile);
 
-      // Update onboarding status to active
-      await this.userRepository.updateOnboardingStatus(firebaseUid, "ACTIVE");
+      // Update onboarding status to indicate profile initialization complete
+      await this.userRepository.updateOnboardingStatus(
+        firebaseUid,
+        "COMPLETED_INIT_PROFILE"
+      );
 
       return createSuccessResult(styleProfile);
     } catch (error) {

@@ -19,6 +19,8 @@ export type OnboardingStatus =
   | "QUESTIONNAIRE_COMPLETED"
   | "PROFILE_GENERATING"
   | "PROFILE_ERROR"
+  | "COMPLETED_INIT_PROFILE"
+  | "PROFILE_DONE"
   | "ACTIVE";
 
 // Auth related types
@@ -175,4 +177,9 @@ export interface EmailGenerationContext {
     email: string;
     relationship?: "colleague" | "client" | "manager" | "other";
   };
+  // Additional context to improve personalization
+  senderName?: string; // parsed from latest message's From header
+  senderEmail?: string;
+  senderCompany?: string; // inferred from sender email domain when possible
+  recipientName?: string; // the user's name (author of reply)
 }

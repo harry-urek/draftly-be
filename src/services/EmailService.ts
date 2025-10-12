@@ -1,6 +1,7 @@
 /* eslint-disable import/no-unresolved */
 import { GmailIntegration } from "../integrations/GmailIntegration";
 import { VertexAIIntegration } from "../integrations/VertexAIIntegration";
+import { CacheManager } from "../lib/cache";
 import {
   EmailBatchUpsertResult,
   EmailRepository,
@@ -34,6 +35,22 @@ export class EmailService {
     private gmailIntegration: GmailIntegration,
     private vertexAIIntegration: VertexAIIntegration
   ) {}
+
+  private async ensureValidTokens(
+    firebaseUid: string,
+    tokens: AuthTokens
+  ): Promise<AuthTokens | null> {
+    const validation = await this.gmailIntegration.validateTokens(tokens);
+    if (!validation.valid) return null;
+    if (validation.refreshedTokens?.accessToken) {
+      await this.userRepository.storeTokens(
+        firebaseUid,
+        validation.refreshedTokens
+      );
+      return validation.refreshedTokens;
+    }
+    return tokens;
+  }
 
   async getThreads(
     firebaseUid: string,
@@ -72,8 +89,18 @@ export class EmailService {
           return createErrorResult<ThreadPayload>("Gmail tokens not found");
         }
 
+        const effectiveTokens = await this.ensureValidTokens(
+          firebaseUid,
+          tokens
+        );
+        if (!effectiveTokens) {
+          return createErrorResult<ThreadPayload>(
+            "Gmail authentication required"
+          );
+        }
+
         const threadMessages = await this.gmailIntegration.getThreadMessages(
-          tokens,
+          effectiveTokens,
           thread.gmailId
         );
 
@@ -128,6 +155,9 @@ export class EmailService {
           return createErrorResult<ThreadPayload>("Thread not found");
         }
 
+        // Fire-and-forget: generate suggested reply in background (cache-only)
+        void this.generateAndCacheSuggestedReply(firebaseUid, refreshed.id);
+
         if (upsertReport.errors.length > 0) {
           return {
             success: false,
@@ -159,7 +189,56 @@ export class EmailService {
       firebaseUid,
       "access",
       async ({ user, tokens }: { user: User; tokens: AuthTokens }) => {
-        const messages = await this.gmailIntegration.getMessages(tokens);
+        // Attempt to fetch; on auth failure, try to validate/refresh and persist
+        let effectiveTokens: AuthTokens = tokens;
+
+        const tryFetch = async (t: AuthTokens) =>
+          this.gmailIntegration.getMessages(t);
+
+        let messages: Awaited<
+          ReturnType<typeof this.gmailIntegration.getMessages>
+        >;
+        try {
+          messages = await tryFetch(effectiveTokens);
+        } catch (e: unknown) {
+          const msg = String((e as Error)?.message || e);
+          const isInvalidGrant = /invalid[_ ]grant/i.test(msg);
+          const isAuthErr =
+            isInvalidGrant ||
+            /invalid authentication|unauthorized|401|403/i.test(msg);
+          if (!isAuthErr) throw e;
+
+          // If invalid_grant, tokens are revoked/expired; mark user to re-auth and short-circuit
+          if (isInvalidGrant) {
+            await this.userRepository.updateOnboardingStatus(
+              firebaseUid,
+              "GMAIL_CONNECTED"
+            );
+            return createSuccessResult({
+              synced: 0,
+              errors: 1,
+              errorDetails: [
+                {
+                  messageId: "-",
+                  error:
+                    "Gmail authorization expired (invalid_grant). Please re-connect Gmail.",
+                },
+              ],
+            });
+          }
+
+          // Otherwise try to validate and refresh tokens if possible
+          const validation =
+            await this.gmailIntegration.validateTokens(effectiveTokens);
+          if (!validation.valid) {
+            return createErrorResult("Gmail authentication required");
+          }
+          if (validation.refreshedTokens?.accessToken) {
+            effectiveTokens = validation.refreshedTokens;
+            await this.userRepository.storeTokens(firebaseUid, effectiveTokens);
+          }
+          messages = await tryFetch(effectiveTokens);
+        }
         const threadCache = new Map<string, EmailThread>();
         const emailPayloads: EmailUpsertInput[] = [];
 
@@ -241,7 +320,43 @@ export class EmailService {
             context.threadHistory || thread.messages.map((m) => m.body),
           tone: context.tone,
           recipient: context.recipient,
+          recipientName: user.name,
         };
+
+        // Enrich with sender name/email/company when possible for the latest message
+        const latestMsg = thread.messages[thread.messages.length - 1];
+        if (latestMsg?.from) {
+          try {
+            const {
+              parseNameAndEmail,
+              inferCompanyFromEmail,
+              extractSignatureBlock,
+              extractCompanyFromSignature,
+              extractTextFromHtml,
+            } = await import("../utils/helpers.js");
+            const parsed = parseNameAndEmail(latestMsg.from);
+            if (parsed) {
+              generationContext.senderName = parsed.name;
+              generationContext.senderEmail = parsed.email;
+              // Try to infer company from signature first, then fallback to domain
+              let company: string | undefined;
+              const bodyText = latestMsg.htmlBody
+                ? extractTextFromHtml(latestMsg.htmlBody)
+                : latestMsg.body;
+              const sig = bodyText ? extractSignatureBlock(bodyText) : null;
+              if (sig) {
+                const guess = extractCompanyFromSignature(sig);
+                if (guess.company && guess.confidence >= 0.5) {
+                  company = guess.company;
+                }
+              }
+              generationContext.senderCompany =
+                company || inferCompanyFromEmail(parsed.email);
+            }
+          } catch {
+            // non-fatal
+          }
+        }
 
         const draftContent = await this.vertexAIIntegration.generateEmailDraft(
           styleProfile as AIStyleProfile,
@@ -261,6 +376,102 @@ export class EmailService {
     );
   }
 
+  // Generate a suggested reply using Vertex AI and cache it (no DB write)
+  async generateAndCacheSuggestedReply(
+    firebaseUid: string,
+    threadId: string,
+    opts?: Partial<EmailGenerationContext>
+  ): Promise<void> {
+    try {
+      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
+      if (!user) return;
+      const styleProfile =
+        await this.userRepository.getStyleProfile(firebaseUid);
+      if (!styleProfile) return;
+
+      const thread = await this.emailRepository.findThreadById(threadId);
+      if (!thread || thread.messages.length === 0) return;
+
+      const generationContext: EmailGenerationContext = {
+        originalEmail:
+          opts?.originalEmail ||
+          thread.messages[thread.messages.length - 1]?.body ||
+          "",
+        threadHistory:
+          opts?.threadHistory || thread.messages.map((m) => m.body),
+        tone: opts?.tone,
+        recipient: opts?.recipient,
+        recipientName: user.name,
+      };
+
+      const latestMsg = thread.messages[thread.messages.length - 1];
+      if (latestMsg?.from) {
+        try {
+          const {
+            parseNameAndEmail,
+            inferCompanyFromEmail,
+            extractSignatureBlock,
+            extractCompanyFromSignature,
+            extractTextFromHtml,
+          } = await import("../utils/helpers.js");
+          const parsed = parseNameAndEmail(latestMsg.from);
+          if (parsed) {
+            generationContext.senderName = parsed.name;
+            generationContext.senderEmail = parsed.email;
+            let company: string | undefined;
+            const bodyText = latestMsg.htmlBody
+              ? extractTextFromHtml(latestMsg.htmlBody)
+              : latestMsg.body;
+            const sig = bodyText ? extractSignatureBlock(bodyText) : null;
+            if (sig) {
+              const guess = extractCompanyFromSignature(sig);
+              if (guess.company && guess.confidence >= 0.5) {
+                company = guess.company;
+              }
+            }
+            generationContext.senderCompany =
+              company || inferCompanyFromEmail(parsed.email);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const content = await this.vertexAIIntegration.generateEmailDraft(
+        styleProfile as AIStyleProfile,
+        generationContext
+      );
+
+      await CacheManager.setSuggestedReply(user.id, threadId, {
+        content,
+        tone: generationContext.tone,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      // Cache-only path; swallow errors to avoid blocking UX, but log for visibility
+      const msg = String((err as Error)?.message || err || "");
+      console.warn(
+        `[EmailService] generateAndCacheSuggestedReply failed for thread ${threadId}: ${msg}`
+      );
+    }
+  }
+
+  async getSuggestedReply(
+    firebaseUid: string,
+    threadId: string
+  ): Promise<
+    ServiceResult<{ content: string; tone?: string; createdAt: string } | null>
+  > {
+    try {
+      const user = await this.userRepository.findByFirebaseUid(firebaseUid);
+      if (!user) return createSuccessResult(null);
+      const cached = await CacheManager.getSuggestedReply(user.id, threadId);
+      return createSuccessResult(cached);
+    } catch (error) {
+      return handleServiceError(error);
+    }
+  }
+
   async sendDraft(
     firebaseUid: string,
     draftId: string
@@ -272,6 +483,36 @@ export class EmailService {
         void tokens;
         await this.emailRepository.updateDraftStatus(draftId, "SENT");
         return createSuccessResult("Draft sent successfully");
+      }
+    );
+  }
+
+  async sendNewEmail(
+    firebaseUid: string,
+    to: string,
+    subject: string,
+    body: string
+  ): Promise<ServiceResult<string>> {
+    return this.executeWithUserAndTokens<string>(
+      firebaseUid,
+      "any",
+      async ({ tokens }: { user: User; tokens: AuthTokens }) => {
+        const validation = await this.gmailIntegration.validateTokens(tokens);
+        if (!validation.valid) {
+          return createErrorResult<string>("Gmail authentication required");
+        }
+        let effectiveTokens = tokens;
+        if (validation.refreshedTokens?.accessToken) {
+          effectiveTokens = validation.refreshedTokens;
+          await this.userRepository.storeTokens(firebaseUid, effectiveTokens);
+        }
+        const msgId = await this.gmailIntegration.sendEmail(
+          effectiveTokens,
+          to,
+          subject,
+          body
+        );
+        return createSuccessResult(msgId);
       }
     );
   }
@@ -295,6 +536,19 @@ export class EmailService {
       firebaseUid,
       "any",
       async ({ tokens }: { user: User; tokens: AuthTokens }) => {
+        // Ensure valid tokens before reply
+        let effectiveTokens: AuthTokens = tokens;
+        const validation =
+          await this.gmailIntegration.validateTokens(effectiveTokens);
+        if (!validation.valid) {
+          return createErrorResult<ThreadPayload>(
+            "Gmail authentication required"
+          );
+        }
+        if (validation.refreshedTokens?.accessToken) {
+          effectiveTokens = validation.refreshedTokens;
+          await this.userRepository.storeTokens(firebaseUid, effectiveTokens);
+        }
         const thread = await this.emailRepository.findThreadById(threadId);
         if (!thread) {
           return createErrorResult<ThreadPayload>("Thread not found");
@@ -307,7 +561,7 @@ export class EmailService {
         }
 
         const threadMessages = await this.gmailIntegration.getThreadMessages(
-          tokens,
+          effectiveTokens,
           thread.gmailId
         );
 
@@ -353,7 +607,7 @@ export class EmailService {
           )
         ) as string[];
 
-        await this.gmailIntegration.sendReply(tokens, {
+        await this.gmailIntegration.sendReply(effectiveTokens, {
           threadId: thread.gmailId,
           to: recipient,
           subject,
